@@ -52,6 +52,7 @@ from data.svm_parser import (
     save_svm,
 )
 from data.telemetry_reader import TelemetryReader
+from gui.i18n import init_i18n, I18n
 
 import numpy as np
 import torch
@@ -109,6 +110,9 @@ class VirtualEngineer:
 
         # Config
         self.config = AppConfig()
+        
+        # Inicializar internacionalização
+        init_i18n(self.config.get("language", "pt-br"))
 
         # Detectar LMU
         self.lmu_path = detect_lmu_path()
