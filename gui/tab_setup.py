@@ -246,13 +246,13 @@ class SetupTab(ctk.CTkFrame):
         base_btns.pack(fill="x", padx=14, pady=(0, 10))
 
         ctk.CTkButton(
-            base_btns, text="📂 Carregar .svm", width=130, height=32,
+            base_btns, text=f"📂 {_('load_svm')}", width=130, height=32,
             fg_color=COLORS["accent_blue"], hover_color="#3588b8",
             font=("Arial", 11), command=self._on_load_base,
         ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
-            base_btns, text="👁 Ver Detalhes", width=110, height=32,
+            base_btns, text=f"👁 {_('view_details')}", width=110, height=32,
             fg_color=COLORS["accent_purple"], hover_color="#7a3bb8",
             font=("Arial", 11), command=self._on_view_base,
         ).pack(side="left", padx=(0, 4))
@@ -265,7 +265,7 @@ class SetupTab(ctk.CTkFrame):
         self._btn_clear.pack(side="right")
 
         # ─── Ações Rápidas ────────────────────
-        actions_card = Card(right, title="⚡ Ações Rápidas")
+        actions_card = Card(right, title=f"⚡ {_('quick_actions')}")
         actions_card.pack(fill="x", pady=(0, 6))
 
         actions_grid = ctk.CTkFrame(actions_card, fg_color="transparent")
@@ -273,31 +273,31 @@ class SetupTab(ctk.CTkFrame):
         actions_grid.columnconfigure((0, 1), weight=1)
 
         ctk.CTkButton(
-            actions_grid, text="✨ Criar Setup", height=36,
+            actions_grid, text=f"✨ {_('create_setup')}", height=36,
             fg_color=COLORS["accent_green"], hover_color="#009955",
             font=("Arial", 11, "bold"), command=self._on_create_setup,
         ).grid(row=0, column=0, padx=2, pady=2, sticky="ew")
 
         ctk.CTkButton(
-            actions_grid, text="✏️ Editar Setup", height=36,
+            actions_grid, text=f"✏️ {_('edit_setup')}", height=36,
             fg_color=COLORS["accent_orange"], hover_color="#cc7030",
             font=("Arial", 11), command=self._on_edit_setup,
         ).grid(row=0, column=1, padx=2, pady=2, sticky="ew")
 
         ctk.CTkButton(
-            actions_grid, text="🔄 Pedir Sugestão IA", height=36,
+            actions_grid, text=f"🤖 {_('ask_ia')}", height=36,
             fg_color=COLORS["accent_blue"], hover_color="#3588b8",
             font=("Arial", 11), command=self._on_request_ai,
         ).grid(row=1, column=0, padx=2, pady=2, sticky="ew")
 
         ctk.CTkButton(
-            actions_grid, text="📐 Usar Heurísticas", height=36,
+            actions_grid, text=f"📐 {_('use_heuristics')}", height=36,
             fg_color=COLORS["accent_purple"], hover_color="#7a3bb8",
             font=("Arial", 11), command=self._on_request_heuristics,
         ).grid(row=1, column=1, padx=2, pady=2, sticky="ew")
 
         # ─── Sugestões Atuais ─────────────────
-        sug_card = Card(right, title="💡 Sugestões de Ajuste")
+        sug_card = Card(right, title=f"💡 {_('adjustment_suggestions')}")
         sug_card.pack(fill="both", expand=True, pady=(0, 6))
 
         # Scrollable frame para todos os parâmetros
