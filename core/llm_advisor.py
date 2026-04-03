@@ -130,6 +130,11 @@ DEFAULT_MODEL = "deepseek/deepseek-chat-v3-0324"
 FALLBACK_MODEL = "deepseek/deepseek-chat"
 MAX_HISTORY = 10
 REQUEST_TIMEOUT = 25
+LOCAL_REQUEST_TIMEOUT = 120
+LOCAL_MAX_TOKENS = 800
+LOCAL_MAX_HISTORY_TURNS = 3
+LOCAL_MAX_INPUT_CHARS = 6000
+LOCAL_MAX_ASSISTANT_CHARS = 1200
 
 
 @dataclass
@@ -240,6 +245,12 @@ Seja direto, técnico mas acessível. Use analogias quando possível. \
 Sempre termine com uma ação concreta que o piloto pode tomar.
 """
 
+_SYSTEM_PROMPT_COMPACT = """\
+Você é o Engenheiro Virtual do LMU. Responda em português de forma objetiva,
+técnica e prática. Priorize sugestões seguras de setup e evite inventar dados.
+Use no máximo 3 ajustes por resposta e sempre explique rapidamente o porquê.
+"""
+
 
 class LLMAdvisor:
     """
@@ -268,13 +279,30 @@ class LLMAdvisor:
             return True  # LM Studio local não precisa de API key
         return self._enabled and bool(self._api_key)
 
+    @staticmethod
+    def _normalize_lmstudio_url(url: str) -> str:
+        """Aceita URL base e garante endpoint /v1/chat/completions."""
+        raw = (url or "").strip()
+        if not raw:
+            return ""
+
+        low = raw.lower().rstrip("/")
+        if low.endswith("/v1/chat/completions"):
+            return raw.rstrip("/")
+        if low.endswith(":1234"):
+            return raw.rstrip("/") + "/v1/chat/completions"
+        if low.endswith("/v1"):
+            return raw.rstrip("/") + "/chat/completions"
+        return raw
+
     @property
     def api_url(self) -> str:
         """Retorna a URL da API baseada no provedor selecionado."""
-        if self._provider in ("custom", "lmstudio"):
-            return self._custom_url or API_PROVIDERS.get(
-                self._provider, {}
-            ).get("url", "")
+        if self._provider == "lmstudio":
+            raw_url = self._custom_url or API_PROVIDERS["lmstudio"]["url"]
+            return self._normalize_lmstudio_url(raw_url)
+        if self._provider == "custom":
+            return self._custom_url or ""
         prov = API_PROVIDERS.get(self._provider, API_PROVIDERS[DEFAULT_PROVIDER])
         return prov["url"]
 
@@ -308,8 +336,14 @@ class LLMAdvisor:
         self._history.clear()
 
     @staticmethod
-    def detect_provider(api_key: str) -> str:
-        """Detecta automaticamente o provedor pela API key."""
+    def detect_provider(api_key: str = "", api_url: str = "") -> str:
+        """Detecta automaticamente o provedor pela API key ou URL."""
+        url = api_url.strip().lower()
+        if url.startswith(("http://", "https://")):
+            if "127.0.0.1:1234" in url or "localhost:1234" in url:
+                return "lmstudio"
+            return "custom"
+
         key = api_key.strip()
         if key.startswith("sk-or-"):
             return "openrouter"
@@ -380,16 +414,108 @@ class LLMAdvisor:
         self._history.append({"role": "user", "content": user_message})
 
         # Manter histórico limitado
-        if len(self._history) > MAX_HISTORY * 2:
-            self._history = self._history[-MAX_HISTORY * 2:]
+        max_entries = MAX_HISTORY * 2
+        if self._provider == "lmstudio":
+            max_entries = LOCAL_MAX_HISTORY_TURNS * 2
 
-        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
-        messages.extend(self._history)
+        if len(self._history) > max_entries:
+            self._history = self._history[-max_entries:]
+
+        system_prompt = (
+            _SYSTEM_PROMPT_COMPACT
+            if self._provider == "lmstudio"
+            else _SYSTEM_PROMPT
+        )
+
+        history_for_request = self._history
+        if self._provider == "lmstudio":
+            budget = max(1200, LOCAL_MAX_INPUT_CHARS - len(system_prompt))
+            history_for_request = self._trim_history_by_chars(
+                self._history,
+                max_chars=budget,
+            )
+
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(history_for_request)
 
         response_text = self._api_request(messages)
 
-        self._history.append({"role": "assistant", "content": response_text})
+        # Recovery automático para modelos locais com janela de contexto menor.
+        if (
+            self._provider == "lmstudio"
+            and "context size" in response_text.lower()
+        ):
+            self._history = self._history[-1:]
+            retry_messages = [
+                {"role": "system", "content": _SYSTEM_PROMPT_COMPACT},
+                {"role": "user", "content": user_message[-1500:]},
+            ]
+            response_text = self._api_request(retry_messages)
+
+        if not self._is_error_response(response_text):
+            stored = response_text
+            if self._provider == "lmstudio":
+                stored = self._compact_assistant_text(response_text)
+            self._history.append({"role": "assistant", "content": stored})
         return response_text
+
+    @staticmethod
+    def _trim_history_by_chars(history: list[dict], max_chars: int) -> list[dict]:
+        """Mantém apenas as mensagens mais recentes dentro do orçamento de chars."""
+        kept: list[dict] = []
+        total = 0
+        for msg in reversed(history):
+            content = str(msg.get("content", ""))
+            size = len(content)
+            if kept and total + size > max_chars:
+                break
+            if size > max_chars and not kept:
+                clipped = dict(msg)
+                clipped["content"] = content[-max_chars:]
+                kept.append(clipped)
+                break
+            kept.append(msg)
+            total += size
+        kept.reverse()
+        return kept
+
+    @staticmethod
+    def _is_error_response(text: str) -> bool:
+        """Evita guardar mensagens de erro no histórico de conversa."""
+        low = (text or "").strip().lower()
+        if not low:
+            return True
+        return (
+            low.startswith("❌")
+            or low.startswith("⚠️")
+            or low.startswith("⏱️")
+            or "erro http" in low
+            or "context size" in low
+        )
+
+    @staticmethod
+    def _compact_assistant_text(text: str) -> str:
+        """Reduz texto salvo no histórico para evitar inflar contexto local."""
+        raw = (text or "").strip()
+        if not raw:
+            return ""
+
+        cleaned = raw
+        markers = (
+            "thinking process:",
+            "reasoning:",
+            "chain of thought:",
+        )
+        low = cleaned.lower()
+        for marker in markers:
+            pos = low.find(marker)
+            if pos >= 0:
+                cleaned = cleaned[:pos].strip()
+                low = cleaned.lower()
+
+        if len(cleaned) > LOCAL_MAX_ASSISTANT_CHARS:
+            cleaned = cleaned[:LOCAL_MAX_ASSISTANT_CHARS].rstrip() + "..."
+        return cleaned
 
     # ─── Auto-Aprendizagem ─────────────────────────────
 
@@ -561,11 +687,18 @@ class LLMAdvisor:
             headers["HTTP-Referer"] = "https://lmu-virtual-engineer.app"
             headers["X-Title"] = "LMU Virtual Engineer"
 
+        max_tokens = LOCAL_MAX_TOKENS if self._provider == "lmstudio" else 1500
+        timeout_s = (
+            LOCAL_REQUEST_TIMEOUT
+            if self._provider == "lmstudio"
+            else REQUEST_TIMEOUT
+        )
+
         payload = json.dumps({
             "model": self._model,
             "messages": messages,
             "temperature": 0.3,
-            "max_tokens": 1500,
+            "max_tokens": max_tokens,
         }).encode("utf-8")
 
         req = urllib.request.Request(
@@ -580,7 +713,7 @@ class LLMAdvisor:
                      prov_name, self._model, len(messages))
 
         try:
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
                 data = json.loads(raw)
 
@@ -595,7 +728,23 @@ class LLMAdvisor:
 
             choices = data.get("choices", [])
             if choices:
-                content = choices[0].get("message", {}).get("content", "")
+                msg = choices[0].get("message", {})
+                content = msg.get("content", "") or msg.get("text", "")
+                # Nunca expor reasoning_content bruto no chat.
+                # Alguns modelos retornam apenas raciocínio interno quando
+                # max_tokens é atingido antes da resposta final.
+                if not content:
+                    reasoning = msg.get("reasoning_content", "")
+                    if reasoning:
+                        logger.warning(
+                            "LLM sem resposta final (content vazio, reasoning=%d chars)",
+                            len(reasoning),
+                        )
+                    return (
+                        "Sem resposta final do modelo nesta tentativa. "
+                        "Tente novamente com uma pergunta mais curta."
+                    )
+                content = self._compact_assistant_text(content)
                 logger.info("LLM response: %d chars", len(content))
                 return content
 
@@ -617,9 +766,14 @@ class LLMAdvisor:
                 return f"❌ Erro HTTP {e.code}: {body[:100]}"
 
         except (socket.timeout, TimeoutError):
-            logger.error("LLM timeout após %ds", REQUEST_TIMEOUT)
+            logger.error("LLM timeout após %ds", timeout_s)
+            if self._provider == "lmstudio":
+                return (
+                    f"⏱️ Timeout ({timeout_s}s). O LM Studio demorou para responder. "
+                    "Confirme se o modelo está carregado e tente novamente."
+                )
             return (
-                f"⏱️ Timeout ({REQUEST_TIMEOUT}s). O modelo pode estar sobrecarregado. "
+                f"⏱️ Timeout ({timeout_s}s). O modelo pode estar sobrecarregado. "
                 "Tente novamente ou use um modelo mais rápido "
                 "(ex: deepseek/deepseek-v3.2 ou qwen/qwen3.6-plus-preview:free)."
             )
@@ -627,8 +781,12 @@ class LLMAdvisor:
         except urllib.error.URLError as e:
             logger.error("LLM connection error: %s", e)
             if isinstance(e.reason, (socket.timeout, TimeoutError)):
+                if self._provider == "lmstudio":
+                    return (
+                        f"⏱️ Timeout ({timeout_s}s). O LM Studio não respondeu a tempo."
+                    )
                 return (
-                    f"⏱️ Timeout ({REQUEST_TIMEOUT}s). "
+                    f"⏱️ Timeout ({timeout_s}s). "
                     "Tente novamente ou use um modelo mais rápido."
                 )
             return "❌ Sem conexão com a internet. Chat funciona offline."
@@ -647,7 +805,7 @@ class LLMAdvisor:
         Returns:
             (sucesso, mensagem) ou None se callback fornecido
         """
-        if not self._api_key:
+        if not self._api_key and self._provider != "lmstudio":
             result = (False, "API key não configurada.")
             if callback:
                 callback(*result)

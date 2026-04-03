@@ -1,4 +1,4 @@
-# LMU Virtual Engineer — Dependências
+# Sector Flow Setups — Dependências
 # Instalar com: pip install -r requirements.txt
 
 # Framework de IA (CPU only — menor tamanho)

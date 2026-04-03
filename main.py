@@ -1,5 +1,5 @@
 """
-main.py — Ponto de entrada do LMU Virtual Engineer.
+main.py — Ponto de entrada do Sector Flow Setups.
 
 Inicializa todos os módulos (banco de dados, IA, telemetria, GUI)
 e conecta os componentes. Funciona como script e como .exe empacotado.
