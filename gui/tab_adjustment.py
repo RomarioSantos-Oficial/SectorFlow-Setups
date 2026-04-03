@@ -18,6 +18,7 @@ from gui.widgets import (
     FeedbackSlider,
     COLORS,
 )
+from gui.i18n import _
 
 logger = logging.getLogger("LMU_VE.gui.adjustment")
 
@@ -46,38 +47,38 @@ class AdjustmentTab(ctk.CTkFrame):
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
 
         # ─── Balanço do Carro ─────────────────
-        bal_card = Card(left, title="🔄 Balanço do Carro")
+        bal_card = Card(left, title=f"🔄 {_('car_balance')}")
         bal_card.pack(fill="x", pady=(0, 8))
 
         ctk.CTkLabel(
-            bal_card, text="Como o carro se comporta nas curvas?",
+            bal_card, text=_("balance_desc"),
             font=("Arial", 10), text_color=COLORS["text_secondary"],
         ).pack(anchor="w", padx=14, pady=(0, 5))
 
         self._fb_bias = FeedbackSlider(
-            bal_card, label="Balanço Geral",
-            left_text="◀ Understeer", right_text="Oversteer ▶",
+            bal_card, label=_("general_balance"),
+            left_text=f"◀ {_('understeer')}", right_text=f"{_('oversteer')} ▶",
         )
         self._fb_bias.pack(fill="x", padx=14, pady=3)
 
         self._fb_low_speed = FeedbackSlider(
-            bal_card, label="Curvas Lentas",
-            left_text="◀ Sub", right_text="Sobre ▶",
+            bal_card, label=_("slow_corners"),
+            left_text=f"◀ {_('sub')}", right_text=f"{_('over')} ▶",
         )
         self._fb_low_speed.pack(fill="x", padx=14, pady=3)
 
         self._fb_high_speed = FeedbackSlider(
-            bal_card, label="Curvas Rápidas",
-            left_text="◀ Sub", right_text="Sobre ▶",
+            bal_card, label=_("fast_corners"),
+            left_text=f"◀ {_('sub')}", right_text=f"{_('over')} ▶",
         )
         self._fb_high_speed.pack(fill="x", padx=14, pady=(3, 12))
 
         # ─── Zona do Problema ─────────────────
-        zone_card = Card(left, title="📍 Zona do Problema na Curva")
+        zone_card = Card(left, title=f"📍 {_('problem_zone')}")
         zone_card.pack(fill="x", pady=(0, 8))
 
         ctk.CTkLabel(
-            zone_card, text="Onde o problema acontece?",
+            zone_card, text=_("where_problem"),
             font=("Arial", 10), text_color=COLORS["text_secondary"],
         ).pack(anchor="w", padx=14, pady=(0, 5))
 
@@ -86,74 +87,74 @@ class AdjustmentTab(ctk.CTkFrame):
         zones.columnconfigure((0, 1, 2), weight=1)
 
         self._cb_entry = ctk.CTkCheckBox(
-            zones, text="🔴 Entrada\n(frenagem)",
+            zones, text=f"🔴 {_('entry')}\n({_('braking')})",
             font=("Arial", 10), checkbox_width=20, checkbox_height=20,
         )
         self._cb_entry.grid(row=0, column=0, padx=4, pady=4, sticky="w")
 
         self._cb_mid = ctk.CTkCheckBox(
-            zones, text="🟡 Meio\n(ápice)",
+            zones, text=f"🟡 {_('mid')}\n({_('apex')})",
             font=("Arial", 10), checkbox_width=20, checkbox_height=20,
         )
         self._cb_mid.grid(row=0, column=1, padx=4, pady=4, sticky="w")
 
         self._cb_exit = ctk.CTkCheckBox(
-            zones, text="🟢 Saída\n(aceleração)",
+            zones, text=f"🟢 {_('exit')}\n({_('acceleration')})",
             font=("Arial", 10), checkbox_width=20, checkbox_height=20,
         )
         self._cb_exit.grid(row=0, column=2, padx=4, pady=4, sticky="w")
 
         # ─── Sensações Específicas ────────────
-        feel_card = Card(left, title="🎯 Sensações do Carro")
+        feel_card = Card(left, title=f"🎯 {_('car_feeling')}")
         feel_card.pack(fill="x", pady=(0, 8))
 
         self._fb_stability = FeedbackSlider(
-            feel_card, label="Estabilidade",
-            left_text="Instável", right_text="Estável",
+            feel_card, label=_("stability"),
+            left_text=_("unstable"), right_text=_("stable"),
         )
         self._fb_stability.pack(fill="x", padx=14, pady=3)
 
         self._fb_responsive = FeedbackSlider(
-            feel_card, label="Resposta da Direção",
-            left_text="Lento", right_text="Nervoso",
+            feel_card, label=_("steering_response"),
+            left_text=_("slow_response"), right_text=_("nervous"),
         )
         self._fb_responsive.pack(fill="x", padx=14, pady=3)
 
         self._fb_traction = FeedbackSlider(
-            feel_card, label="Tração na Saída",
-            left_text="Patina", right_text="Boa",
+            feel_card, label=_("traction_exit"),
+            left_text=_("spins"), right_text=_("good"),
             from_=-1.0, to=1.0,
         )
         self._fb_traction.pack(fill="x", padx=14, pady=3)
 
         self._fb_predictability = FeedbackSlider(
-            feel_card, label="Previsibilidade",
-            left_text="Imprevisível", right_text="Confiável",
+            feel_card, label=_("predictability"),
+            left_text=_("unpredictable"), right_text=_("predictable"),
             from_=-1.0, to=1.0,
         )
         self._fb_predictability.pack(fill="x", padx=14, pady=3)
 
         self._fb_confidence_feel = FeedbackSlider(
-            feel_card, label="Confiança ao Pilotar",
-            left_text="Inseguro", right_text="Confiante",
+            feel_card, label=_("driver_confidence"),
+            left_text=_("insecure"), right_text=_("confident"),
             from_=-1.0, to=1.0,
         )
         self._fb_confidence_feel.pack(fill="x", padx=14, pady=(3, 12))
 
         # ─── Velocidade e Potência ────────────
-        speed_card = Card(left, title="⚡ Velocidade / Potência")
+        speed_card = Card(left, title=f"⚡ {_('speed_power')}")
         speed_card.pack(fill="x", pady=(0, 8))
 
         self._fb_top_speed = FeedbackSlider(
-            speed_card, label="Velocidade nas Retas",
-            left_text="Falta velocidade", right_text="Boa",
+            speed_card, label=_("straight_speed"),
+            left_text=_("lacks_speed"), right_text=_("good"),
             from_=-1.0, to=1.0,
         )
         self._fb_top_speed.pack(fill="x", padx=14, pady=3)
 
         self._fb_accel = FeedbackSlider(
-            speed_card, label="Aceleração na Saída de Curva",
-            left_text="Lenta", right_text="Forte",
+            speed_card, label=_("accel_exit"),
+            left_text=_("slow_accel"), right_text=_("strong_accel"),
             from_=-1.0, to=1.0,
         )
         self._fb_accel.pack(fill="x", padx=14, pady=(3, 12))
@@ -164,83 +165,83 @@ class AdjustmentTab(ctk.CTkFrame):
         right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
         # ─── Frenagem ─────────────────────────
-        brake_card = Card(right, title="🛑 Frenagem")
+        brake_card = Card(right, title=f"🛑 {_('braking_section')}")
         brake_card.pack(fill="x", pady=(0, 8))
 
         self._fb_brake = FeedbackSlider(
-            brake_card, label="Potência do Freio",
-            left_text="Fraco", right_text="Muito forte",
+            brake_card, label=_("brake_power"),
+            left_text=_("weak"), right_text=_("too_strong"),
         )
         self._fb_brake.pack(fill="x", padx=14, pady=3)
 
         self._fb_brake_bal = FeedbackSlider(
-            brake_card, label="Balanço de Freio",
-            left_text="◀ Dianteiro", right_text="Traseiro ▶",
+            brake_card, label=_("brake_balance_label"),
+            left_text=_("front_bias"), right_text=_("rear_bias"),
         )
         self._fb_brake_bal.pack(fill="x", padx=14, pady=3)
 
         self._fb_lockup = FeedbackSlider(
-            brake_card, label="Travamento de Rodas",
-            left_text="Nunca trava", right_text="Trava muito",
+            brake_card, label=_("wheel_locking"),
+            left_text=_("never_locks"), right_text=_("locks_much"),
             from_=0.0, to=1.0,
         )
         self._fb_lockup.pack(fill="x", padx=14, pady=(3, 12))
 
         # ─── Conforto / Rigidez ───────────────
-        comfort_card = Card(right, title="🛞 Conforto")
+        comfort_card = Card(right, title=f"🛞 {_('comfort_section')}")
         comfort_card.pack(fill="x", pady=(0, 8))
 
         self._fb_stiffness = FeedbackSlider(
-            comfort_card, label="Rigidez Geral",
-            left_text="Macio demais", right_text="Duro demais",
+            comfort_card, label=_("overall_stiffness"),
+            left_text=_("too_soft"), right_text=_("too_stiff"),
         )
         self._fb_stiffness.pack(fill="x", padx=14, pady=3)
 
         self._fb_curbs = FeedbackSlider(
-            comfort_card, label="Comportamento nos Meios-fios",
-            left_text="Desestabiliza", right_text="Estável",
+            comfort_card, label=_("curb_behavior"),
+            left_text=_("destabilizes"), right_text=_("stable"),
         )
         self._fb_curbs.pack(fill="x", padx=14, pady=3)
 
         self._fb_bottoming = FeedbackSlider(
-            comfort_card, label="Batendo no Chão (Bottoming)",
-            left_text="Nunca", right_text="Sempre",
+            comfort_card, label=_("bottoming_label"),
+            left_text=_("never"), right_text=_("always"),
             from_=0.0, to=1.0,
         )
         self._fb_bottoming.pack(fill="x", padx=14, pady=(3, 12))
 
         # ─── Pneus ───────────────────────────
-        tire_card = Card(right, title="🏎️ Pneus")
+        tire_card = Card(right, title=f"🏎️ {_('tires')}")
         tire_card.pack(fill="x", pady=(0, 8))
 
         self._fb_tire_wear = FeedbackSlider(
-            tire_card, label="Desgaste dos Pneus",
-            left_text="Normal", right_text="Desgasta rápido",
+            tire_card, label=_("tire_wear_label"),
+            left_text=_("normal_wear"), right_text=_("fast_wear"),
             from_=0.0, to=1.0,
         )
         self._fb_tire_wear.pack(fill="x", padx=14, pady=3)
 
         self._fb_tire_grip = FeedbackSlider(
-            tire_card, label="Grip Geral",
-            left_text="Pouco grip", right_text="Bom grip",
+            tire_card, label=_("overall_grip"),
+            left_text=_("low_grip_label"), right_text=_("good_grip"),
             from_=-1.0, to=1.0,
         )
         self._fb_tire_grip.pack(fill="x", padx=14, pady=(3, 12))
 
         # ─── Confiança ────────────────────────
-        conf_card = Card(right, title="📊 Certeza do Feedback")
+        conf_card = Card(right, title=f"📊 {_('feedback_certainty')}")
         conf_card.pack(fill="x", pady=(0, 8))
 
         self._fb_confidence = FeedbackSlider(
-            conf_card, label="Quão certo você está?",
-            left_text="Pouco", right_text="Muito",
+            conf_card, label=_("how_certain"),
+            left_text=_("little"), right_text=_("much"),
             from_=0.0, to=1.0,
         )
         self._fb_confidence.pack(fill="x", padx=14, pady=(3, 6))
 
         # ─── Botão Enviar ─────────────────────
         btn_send = ctk.CTkButton(
-            right, text="📤 Enviar Feedback Detalhado",
+            right, text=_("send_detailed_feedback"),
             command=self._on_send_feedback,
             fg_color=COLORS["accent_blue"], hover_color="#3588b8",
             height=42, font=("Arial", 13, "bold"),
@@ -250,7 +251,7 @@ class AdjustmentTab(ctk.CTkFrame):
 
         # Botão reset
         ctk.CTkButton(
-            right, text="🔄 Limpar Tudo", command=self._on_reset,
+            right, text=_("clear_all"), command=self._on_reset,
             fg_color="#555555", hover_color="#444444",
             height=32, font=("Arial", 10),
             corner_radius=8,
