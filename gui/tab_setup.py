@@ -26,11 +26,38 @@ from gui.widgets import (
     SuggestedPhrase,
     COLORS,
 )
+from gui.i18n import _, I18n
 
-logger = logging.getLogger("LMU_VE.gui.setup")
+logger = logging.getLogger("SectorFlow.gui.setup")
 
 
-# ─── Frases Sugeridas ──────────────────────────────────
+def get_suggested_phrases():
+    """Retorna frases sugeridas no idioma atual."""
+    return [
+        ("🔄", _("phrase_understeer_entry")),
+        ("🔄", _("phrase_oversteer_exit")),
+        ("🔄", _("phrase_slides_mid")),
+        ("🔄", _("phrase_unstable_high")),
+        ("🏎", _("phrase_front_overheat")),
+        ("🏎", _("phrase_rear_cold")),
+        ("🏎", _("phrase_tire_wear")),
+        ("🛑", _("phrase_wheel_lock")),
+        ("🛑", _("phrase_brakes_weak")),
+        ("🛑", _("phrase_brake_pull")),
+        ("⚡", _("phrase_spin_slow")),
+        ("⚡", _("phrase_traction_high")),
+        ("🌧", _("phrase_rain_setup")),
+        ("🌧", _("phrase_drying_track")),
+        ("🎯", _("phrase_more_speed")),
+        ("🎯", _("phrase_kerb_harsh")),
+        ("🎯", _("phrase_stable_setup")),
+        ("⛽", _("phrase_fuel_high")),
+        ("💨", _("phrase_bottoming")),
+        ("💨", _("phrase_wear_fast")),
+    ]
+
+
+# ─── Frases Sugeridas (fallback) ──────────────────────
 
 SUGGESTED_PHRASES = [
     # Problemas de equilíbrio
@@ -135,7 +162,7 @@ class SetupTab(ctk.CTkFrame):
         chat_header.pack_propagate(False)
 
         ctk.CTkLabel(
-            chat_header, text="🤖 Engenheiro Virtual",
+            chat_header, text=f"🤖 {_('virtual_engineer')}",
             font=("Arial", 15, "bold"),
             text_color=COLORS["accent_cyan"],
         ).pack(side="left", padx=14)
@@ -156,7 +183,7 @@ class SetupTab(ctk.CTkFrame):
         phrases_frame.pack(fill="x", pady=(0, 4))
 
         ctk.CTkLabel(
-            phrases_frame, text="💡 Sugestões rápidas:",
+            phrases_frame, text=f"💡 {_('quick_suggestions')}",
             font=("Arial", 10, "bold"),
             text_color=COLORS["text_secondary"],
         ).pack(anchor="w", padx=4, pady=(0, 2))
@@ -167,7 +194,7 @@ class SetupTab(ctk.CTkFrame):
         )
         self._phrases_scroll.pack(fill="x")
 
-        for icon, text in SUGGESTED_PHRASES:
+        for icon, text in get_suggested_phrases():
             btn = SuggestedPhrase(
                 self._phrases_scroll, text=text, icon=icon,
                 callback=self._on_phrase_click,
@@ -184,7 +211,7 @@ class SetupTab(ctk.CTkFrame):
 
         self._chat_input = ctk.CTkEntry(
             input_frame,
-            placeholder_text="Descreva o problema do carro ou digite um comando...",
+            placeholder_text=_("input_placeholder"),
             font=("Arial", 12), height=40,
             fg_color=COLORS["bg_input"],
             border_width=0, corner_radius=10,
@@ -205,11 +232,11 @@ class SetupTab(ctk.CTkFrame):
         right.pack(side="right", fill="y", padx=(4, 0), pady=0)
 
         # ─── Setup Base Atual ─────────────────
-        base_card = Card(right, title="📄 Setup Base")
+        base_card = Card(right, title=f"📄 {_('setup_base')}")
         base_card.pack(fill="x", pady=(0, 6))
 
         self._base_info = ctk.CTkLabel(
-            base_card, text="Nenhum setup carregado",
+            base_card, text=_("no_setup_loaded"),
             font=("Arial", 11), text_color=COLORS["text_secondary"],
             wraplength=290, justify="left",
         )
