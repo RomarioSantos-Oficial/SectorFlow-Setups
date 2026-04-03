@@ -1,0 +1,27 @@
+# LMU Virtual Engineer — Dependências
+# Instalar com: pip install -r requirements.txt
+
+# Framework de IA (CPU only — menor tamanho)
+torch
+torchvision
+
+# GUI moderna com Dark Mode
+customtkinter>=5.2.0
+
+# Computação numérica
+numpy>=1.24.0
+
+# Gráficos (plots de telemetria)
+matplotlib>=3.7.0
+
+# Imagens (ícones e assets da GUI)
+Pillow>=9.0.0
+
+# Ícone na bandeja do sistema (system tray)
+pystray>=0.19.0
+
+# Detecção de processos do jogo
+psutil>=5.9.0
+
+# Empacotamento como .exe (apenas para build)
+# pyinstaller>=6.0.0
