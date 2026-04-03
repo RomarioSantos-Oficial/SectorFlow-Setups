@@ -1,5 +1,5 @@
 """
-app.py — Janela principal do LMU Virtual Engineer.
+app.py — Janela principal do Sector Flow Setups.
 
 CustomTkinter com Dark Mode, sistema de abas moderno,
 interface conversacional e barra de status.
@@ -20,11 +20,11 @@ from gui.tab_setup import SetupTab
 from gui.tab_database import DatabaseTab
 from gui.widgets import StatusIndicator, WeatherIndicator, COLORS
 
-logger = logging.getLogger("LMU_VE.gui")
+logger = logging.getLogger("SectorFlow.gui")
 
 
 class MainApp(ctk.CTk):
-    """Janela principal do LMU Virtual Engineer."""
+    """Janela principal do Sector Flow Setups."""
 
     def __init__(self, engine=None):
         super().__init__()

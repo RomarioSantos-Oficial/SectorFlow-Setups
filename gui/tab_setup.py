@@ -13,6 +13,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
+import urllib.error
+import urllib.request
 
 import customtkinter as ctk
 
@@ -592,6 +594,10 @@ class SetupTab(ctk.CTkFrame):
             fg_color=COLORS["bg_input"],
         )
         self._custom_url_entry.pack(fill="x")
+        self._custom_url_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._normalize_llm_provider_inputs(),
+        )
         if initial_custom_url:
             self._custom_url_entry.insert(0, initial_custom_url)
 
@@ -601,7 +607,7 @@ class SetupTab(ctk.CTkFrame):
             )
             if initial_provider == "lmstudio" and not initial_custom_url:
                 self._custom_url_entry.insert(
-                    0, "http://localhost:1234/v1/chat/completions"
+                    0, "http://localhost:1234"
                 )
 
         # API Key
@@ -623,6 +629,10 @@ class SetupTab(ctk.CTkFrame):
             fg_color=COLORS["bg_input"],
         )
         self._api_key_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self._api_key_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._normalize_llm_provider_inputs(),
+        )
         if initial_key:
             self._api_key_entry.insert(0, initial_key)
 
@@ -677,6 +687,12 @@ class SetupTab(ctk.CTkFrame):
             fg_color=COLORS["bg_input"],
         )
         self._custom_model_entry.pack(fill="x")
+        if (
+            initial_provider in ("custom", "lmstudio")
+            and initial_model
+            and not initial_model.startswith("(")
+        ):
+            self._custom_model_entry.insert(0, initial_model)
         if initial_provider in ("custom", "lmstudio"):
             self._custom_model_frame.pack(
                 fill="x", padx=14, pady=(0, 4)
@@ -716,7 +732,7 @@ class SetupTab(ctk.CTkFrame):
         ).pack(anchor="w", padx=14, pady=(0, 10))
 
         # Atualizar status inicial
-        if initial_key:
+        if initial_key or initial_provider == "lmstudio":
             self._llm_status.configure(
                 text="🟢 API configurada",
                 text_color=COLORS["accent_green"],
@@ -2008,9 +2024,18 @@ class SetupTab(ctk.CTkFrame):
         if not self.engine:
             return
 
-        # Verificar se API está configurada
-        key = self._api_key_entry.get().strip()
-        if not key:
+        provider, key, custom_url = self._normalize_llm_provider_inputs()
+        model = self._resolve_selected_model(provider)
+
+        if not model:
+            messagebox.showwarning(
+                "Modelo necessário",
+                "Informe o nome do modelo antes de iniciar a destilação.",
+            )
+            return
+
+        # Verificar se API está configurada (LM Studio local não exige key)
+        if not key and provider != "lmstudio":
             messagebox.showwarning(
                 "API necessária",
                 "Configure a API key primeiro.\n"
@@ -2018,6 +2043,11 @@ class SetupTab(ctk.CTkFrame):
                 "para treinar a rede neural.",
             )
             return
+
+        if hasattr(self.engine, "llm_advisor"):
+            self.engine.llm_advisor.set_provider(provider, custom_url)
+            self.engine.llm_advisor.set_model(model)
+            self.engine.llm_advisor.set_api_key(key)
 
         # Verificar se já está rodando
         if (hasattr(self.engine, 'distiller')
@@ -2140,17 +2170,19 @@ class SetupTab(ctk.CTkFrame):
 
     def _on_save_api_key(self):
         """Salva a API key, provedor e modelo nas configurações."""
-        key = self._api_key_entry.get().strip()
-        provider = self._llm_provider_var.get()
-        custom_url = self._custom_url_entry.get().strip()
-
-        # Modelo: usar custom entry se provedor é custom ou lmstudio, senão dropdown
-        if provider in ("custom", "lmstudio"):
-            model = self._custom_model_entry.get().strip()
-            if not model:
-                model = self._llm_model_var.get()
-        else:
-            model = self._llm_model_var.get()
+        provider, key, custom_url = self._normalize_llm_provider_inputs()
+        model = self._resolve_selected_model(provider)
+        if not model:
+            self._llm_status.configure(
+                text="❌ Informe um nome de modelo",
+                text_color=COLORS["accent_red"],
+            )
+            self._add_message(
+                "❌ Defina um modelo válido no campo **Nome do modelo** "
+                "(ex: qwen2.5-7b-instruct).",
+                sender="system",
+            )
+            return
 
         if self.engine and hasattr(self.engine, "config"):
             self.engine.config.set("openrouter_api_key", key)
@@ -2168,7 +2200,7 @@ class SetupTab(ctk.CTkFrame):
             provider, {}
         ).get("name", provider)
 
-        if key:
+        if key or provider == "lmstudio":
             self._llm_status.configure(
                 text=f"🟢 {prov_name} configurado",
                 text_color=COLORS["accent_green"],
@@ -2209,12 +2241,17 @@ class SetupTab(ctk.CTkFrame):
                 fill="x", padx=14, pady=(0, 4),
                 after=self._llm_model_menu,
             )
+            current_model = self._llm_model_var.get().strip()
+            current_custom = self._custom_model_entry.get().strip()
+            if (not current_custom and current_model
+                    and not current_model.startswith("(")):
+                self._custom_model_entry.insert(0, current_model)
             # Preencher URL padrão do LM Studio se estiver vazio
             if provider == "lmstudio":
                 current_url = self._custom_url_entry.get().strip()
                 if not current_url:
                     self._custom_url_entry.insert(
-                        0, "http://localhost:1234/v1/chat/completions"
+                        0, "http://localhost:1234"
                     )
         else:
             self._custom_url_frame.pack_forget()
@@ -2254,10 +2291,80 @@ class SetupTab(ctk.CTkFrame):
                 text_color=COLORS["accent_cyan"],
             )
 
+    @staticmethod
+    def _detect_provider_from_url(url: str) -> str | None:
+        """Detecta provedor baseado no endpoint informado pelo usuário."""
+        raw = (url or "").strip().lower()
+        if not raw or not raw.startswith(("http://", "https://")):
+            return None
+        if "127.0.0.1:1234" in raw or "localhost:1234" in raw:
+            return "lmstudio"
+        return "custom"
+
+    @staticmethod
+    def _normalize_lmstudio_url(url: str) -> str:
+        """Aceita URL base do LM Studio e converte para endpoint de chat."""
+        raw = (url or "").strip()
+        if not raw:
+            return ""
+
+        low = raw.lower().rstrip("/")
+        if low.endswith("/v1/chat/completions"):
+            return raw.rstrip("/")
+        if low.endswith(":1234"):
+            return raw.rstrip("/") + "/v1/chat/completions"
+        if low.endswith("/v1"):
+            return raw.rstrip("/") + "/chat/completions"
+        return raw
+
+    def _normalize_llm_provider_inputs(self) -> tuple[str, str, str]:
+        """
+        Normaliza entradas de LLM para evitar configuração inválida.
+
+        Casos tratados:
+        - URL colada no campo API key (move para campo URL)
+        - Auto-detecção de provedor por URL (LM Studio/Custom)
+        """
+        provider = self._llm_provider_var.get().strip()
+        key = self._api_key_entry.get().strip()
+        custom_url = self._custom_url_entry.get().strip()
+
+        # Usuário às vezes cola a URL local no campo de API key.
+        if key.startswith(("http://", "https://")):
+            if not custom_url:
+                custom_url = key
+                self._custom_url_entry.delete(0, "end")
+                self._custom_url_entry.insert(0, custom_url)
+            key = ""
+            self._api_key_entry.delete(0, "end")
+
+        detected_provider = self._detect_provider_from_url(custom_url)
+        if detected_provider and detected_provider != provider:
+            provider = detected_provider
+            self._llm_provider_var.set(provider)
+            self._on_provider_changed(provider)
+
+        if provider == "lmstudio" and not custom_url:
+            display_url = "http://localhost:1234"
+            self._custom_url_entry.delete(0, "end")
+            self._custom_url_entry.insert(0, display_url)
+            custom_url = self._normalize_lmstudio_url(display_url)
+        elif provider == "lmstudio":
+            # Mantém campo com URL base; normaliza apenas para uso interno
+            display_url = custom_url.rstrip("/")
+            for _sfx in ("/v1/chat/completions", "/v1"):
+                if display_url.lower().endswith(_sfx):
+                    display_url = display_url[: -len(_sfx)]
+                    self._custom_url_entry.delete(0, "end")
+                    self._custom_url_entry.insert(0, display_url)
+                    break
+            custom_url = self._normalize_lmstudio_url(display_url)
+
+        return provider, key, custom_url
+
     def _on_test_api(self):
         """Testa a conexão com a API do provedor selecionado."""
-        key = self._api_key_entry.get().strip()
-        provider = self._llm_provider_var.get()
+        provider, key, custom_url = self._normalize_llm_provider_inputs()
         if not key and provider != "lmstudio":
             self._llm_status.configure(
                 text="❌ Insira uma API key primeiro",
@@ -2269,13 +2376,13 @@ class SetupTab(ctk.CTkFrame):
             text="⏳ Testando...",
             text_color=COLORS["accent_cyan"],
         )
-        model = self._llm_model_var.get()
-        custom_url = self._custom_url_entry.get().strip()
-
-        if provider in ("custom", "lmstudio"):
-            custom_model = self._custom_model_entry.get().strip()
-            if custom_model:
-                model = custom_model
+        model = self._resolve_selected_model(provider)
+        if not model:
+            self._llm_status.configure(
+                text="❌ Informe o modelo para testar",
+                text_color=COLORS["accent_red"],
+            )
+            return
 
         from core.llm_advisor import LLMAdvisor
         test_advisor = LLMAdvisor(
@@ -2287,6 +2394,51 @@ class SetupTab(ctk.CTkFrame):
             self.after(0, self._handle_test_result, success, message)
 
         test_advisor.test_connection(callback=_on_result)
+
+    def _resolve_selected_model(self, provider: str) -> str:
+        """Resolve modelo escolhido evitando enviar placeholders para a API."""
+        if provider in ("custom", "lmstudio"):
+            custom_model = self._custom_model_entry.get().strip()
+            if custom_model and not custom_model.startswith("("):
+                return custom_model
+            option_model = self._llm_model_var.get().strip()
+            if option_model and not option_model.startswith("("):
+                return option_model
+            if provider == "lmstudio":
+                custom_url = self._custom_url_entry.get().strip()
+                detected = self._fetch_lmstudio_model(custom_url)
+                if detected:
+                    self._custom_model_entry.delete(0, "end")
+                    self._custom_model_entry.insert(0, detected)
+                    return detected
+            return ""
+        return self._llm_model_var.get().strip()
+
+    def _fetch_lmstudio_model(self, chat_url: str) -> str:
+        """Busca automaticamente o primeiro modelo carregado no LM Studio."""
+        import json as json_lib
+
+        normalized = self._normalize_lmstudio_url(chat_url)
+        if not normalized:
+            return ""
+
+        base = normalized.rsplit("/chat/completions", 1)[0]
+        models_url = f"{base}/models"
+        req = urllib.request.Request(models_url, method="GET")
+
+        try:
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                raw = resp.read().decode("utf-8")
+            data = json_lib.loads(raw)
+            models = data.get("data", [])
+            if not models:
+                return ""
+            first = models[0]
+            if isinstance(first, dict):
+                return str(first.get("id", "")).strip()
+            return ""
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+            return ""
 
     def _handle_test_result(self, success: bool, message: str):
         """Processa resultado do teste de conexão."""

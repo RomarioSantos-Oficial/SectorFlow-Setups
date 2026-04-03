@@ -1,5 +1,5 @@
 """
-config.py — Configurações globais do LMU Virtual Engineer.
+config.py — Configurações globais do Sector Flow Setups.
 
 Gerencia caminhos, preferências do usuário e detecção automática
 da instalação do Le Mans Ultimate. Todas as configurações são
@@ -20,14 +20,14 @@ import sys
 import winreg
 from pathlib import Path
 
-logger = logging.getLogger("LMU_VE")
+logger = logging.getLogger("SectorFlow")
 
 # ============================================================
 # VERSÃO DO SOFTWARE
 # ============================================================
-APP_NAME = "LMU Virtual Engineer"
+APP_NAME = "Sector Flow Setups"
 APP_VERSION = "1.0.0"
-APP_AUTHOR = "LMU Virtual Engineer Team"
+APP_AUTHOR = "Romario Santos"
 
 # ============================================================
 # DETECÇÃO DE AMBIENTE (normal vs .exe empacotado)
@@ -45,7 +45,7 @@ else:
 # DIRETÓRIOS DO APP
 # ============================================================
 # Dados do usuário ficam em AppData (não dentro do .exe)
-USER_DATA_DIR = Path(os.environ.get("APPDATA", APP_DIR)) / "LMU_Virtual_Engineer"
+USER_DATA_DIR = Path(os.environ.get("APPDATA", APP_DIR)) / "SectorFlowSetups"
 DB_DIR = USER_DATA_DIR / "db"
 MODELS_DIR = USER_DATA_DIR / "models"
 SHARED_MODELS_DIR = MODELS_DIR / "_shared"

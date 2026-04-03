@@ -1,5 +1,5 @@
 """
-widgets.py — Widgets reutilizáveis para a GUI do LMU Virtual Engineer.
+widgets.py — Widgets reutilizáveis para a GUI do Sector Flow Setups.
 
 Componentes visuais customizados construídos sobre CustomTkinter.
 Estilo moderno com cards, cores vibrantes e layout limpo.
