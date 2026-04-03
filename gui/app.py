@@ -107,8 +107,13 @@ class MainApp(ctk.CTk):
         """Menu simplificado — funções de setup agora estão na aba 🎯 Setup."""
         import tkinter as tk
 
-        menubar = tk.Menu(self, tearoff=0)
-        self.configure(menu=menubar)
+        # Limpar menu anterior se existir
+        if hasattr(self, '_menubar') and self._menubar:
+            self._menubar.destroy()
+
+        self._menubar = tk.Menu(self, tearoff=0)
+        self.configure(menu=self._menubar)
+        menubar = self._menubar
 
         # ── Menu Arquivo ──
         file_menu = tk.Menu(menubar, tearoff=0)
@@ -148,13 +153,18 @@ class MainApp(ctk.CTk):
 
     def _build_header(self):
         """Cabeçalho moderno com nome, indicadores e clima."""
-        header = ctk.CTkFrame(
+        # Limpar header anterior se existir
+        if hasattr(self, '_header_frame') and self._header_frame:
+            self._header_frame.destroy()
+
+        self._header_frame = ctk.CTkFrame(
             self, height=60, corner_radius=0,
             fg_color=COLORS["bg_card"],
             border_width=0,
         )
-        header.pack(fill="x", padx=0, pady=0)
-        header.pack_propagate(False)
+        self._header_frame.pack(fill="x", padx=0, pady=0)
+        self._header_frame.pack_propagate(False)
+        header = self._header_frame
 
         # Logo + título
         title_frame = ctk.CTkFrame(header, fg_color="transparent")
@@ -211,6 +221,10 @@ class MainApp(ctk.CTk):
 
     def _build_tabs(self):
         """Constrói o sistema de abas reorganizado."""
+        # Limpar tabs anteriores se existirem
+        if hasattr(self, 'tabview') and self.tabview:
+            self.tabview.destroy()
+
         self.tabview = ctk.CTkTabview(
             self, corner_radius=10,
             segmented_button_fg_color=COLORS["bg_card"],
@@ -245,12 +259,17 @@ class MainApp(ctk.CTk):
 
     def _build_footer(self):
         """Barra de status moderna no rodapé."""
-        footer = ctk.CTkFrame(
+        # Limpar footer anterior se existir
+        if hasattr(self, '_footer_frame') and self._footer_frame:
+            self._footer_frame.destroy()
+
+        self._footer_frame = ctk.CTkFrame(
             self, height=34, corner_radius=0,
             fg_color=COLORS["bg_card"],
         )
-        footer.pack(fill="x", padx=0, pady=0)
-        footer.pack_propagate(False)
+        self._footer_frame.pack(fill="x", padx=0, pady=0)
+        self._footer_frame.pack_propagate(False)
+        footer = self._footer_frame
 
         self.status_label = ctk.CTkLabel(
             footer, text=_("waiting_connection"),
@@ -355,21 +374,33 @@ class MainApp(ctk.CTk):
                 messagebox.showerror(_("error"), f"{_('error')}:\n{e}")
 
     def _on_change_language(self, lang_code: str):
-        """Muda o idioma e salva na configuração."""
+        """Muda o idioma e atualiza a interface em tempo real."""
+        # Salvar configuração
         if self.engine and hasattr(self.engine, "config"):
             self.engine.config.set("language", lang_code)
             self.engine.config.save()
-            I18n.set_language(lang_code)
-            messagebox.showinfo(
-                _("language"),
-                _("msg_language_changed"),
-            )
-        else:
-            I18n.set_language(lang_code)
-            messagebox.showinfo(
-                _("language"),
-                _("msg_language_changed"),
-            )
+        
+        # Atualizar idioma no sistema i18n
+        I18n.set_language(lang_code)
+        
+        # Reconstruir a interface com o novo idioma
+        self._refresh_ui()
+
+    def _refresh_ui(self):
+        """Reconstrói a interface com as traduções atualizadas."""
+        # Reconstruir menu, header, tabs e footer
+        self._build_menu()
+        self._build_header()
+        self._build_tabs()
+        self._build_footer()
+        
+        # Atualizar título da janela
+        self.title(f"{APP_NAME} v{APP_VERSION}")
+        
+        # Re-registrar callbacks se engine existe
+        if self.engine:
+            self.engine._on_auto_suggestion_callback = self._on_auto_suggestion
+            self.engine._on_trend_alert_callback = self._on_trend_alert
 
     def _on_about(self):
         """Mostra janela Sobre com logo."""
