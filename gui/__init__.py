@@ -1,0 +1,1 @@
+# gui/ — Interface gráfica (CustomTkinter)

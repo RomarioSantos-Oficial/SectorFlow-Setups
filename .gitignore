@@ -1,0 +1,28 @@
+# Secrets
+api.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Logs
+logs/
+
+# Database
+db/*.db
+
+# Backups
+backups/
+
+# OS
+*.swp
+Thumbs.db
+Desktop.ini
+
+# PowerShell history
+Microsoft/
+
+# Models (large files)
+models/
