@@ -19,6 +19,7 @@ from gui.tab_adjustment import AdjustmentTab
 from gui.tab_setup import SetupTab
 from gui.tab_database import DatabaseTab
 from gui.widgets import StatusIndicator, WeatherIndicator, COLORS
+from gui.i18n import _, I18n, AVAILABLE_LANGUAGES
 
 logger = logging.getLogger("SectorFlow.gui")
 
@@ -111,19 +112,35 @@ class MainApp(ctk.CTk):
 
         # ── Menu Arquivo ──
         file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Arquivo", menu=file_menu)
+        menubar.add_cascade(label=_("tab_data"), menu=file_menu)
         file_menu.add_command(
-            label="📤 Exportar Dados...",
+            label=f"📤 {_('export')}...",
             command=self._on_export,
         )
         file_menu.add_separator()
-        file_menu.add_command(label="Sair", command=self._on_close)
+        file_menu.add_command(label=_("close"), command=self._on_close)
+
+        # ── Menu Configurações ──
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label=_("settings"), menu=settings_menu)
+        
+        # Submenu de idiomas
+        lang_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label=f"🌐 {_('language')}", menu=lang_menu)
+        
+        current_lang = I18n.get_language()
+        for code, name in AVAILABLE_LANGUAGES.items():
+            check = "✓ " if code == current_lang else "   "
+            lang_menu.add_command(
+                label=f"{check}{name}",
+                command=lambda c=code: self._on_change_language(c),
+            )
 
         # ── Menu Ajuda ──
         help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Ajuda", menu=help_menu)
+        menubar.add_cascade(label=_("info"), menu=help_menu)
         help_menu.add_command(
-            label="ℹ️ Sobre",
+            label=f"ℹ️ {_('info')}",
             command=self._on_about,
         )
 
@@ -204,11 +221,11 @@ class MainApp(ctk.CTk):
         )
         self.tabview.pack(fill="both", expand=True, padx=8, pady=(4, 0))
 
-        # Criar abas na nova ordem
-        tab_setup = self.tabview.add("🎯 Setup")
-        tab_tele = self.tabview.add("📊 Telemetria")
-        tab_fb = self.tabview.add("🎮 Feedback")
-        tab_db = self.tabview.add("🗄️ Dados")
+        # Criar abas na nova ordem (com traduções)
+        tab_setup = self.tabview.add(f"🎯 {_('tab_setup')}")
+        tab_tele = self.tabview.add(f"📊 {_('tab_telemetry')}")
+        tab_fb = self.tabview.add(f"🎮 {_('tab_feedback')}")
+        tab_db = self.tabview.add(f"🗄️ {_('tab_data')}")
 
         # Instanciar conteúdo
         self.tab_setup = SetupTab(tab_setup, engine=self.engine)
@@ -224,7 +241,7 @@ class MainApp(ctk.CTk):
         self.tab_database.pack(fill="both", expand=True)
 
         # Definir aba inicial
-        self.tabview.set("🎯 Setup")
+        self.tabview.set(f"🎯 {_('tab_setup')}")
 
     def _build_footer(self):
         """Barra de status moderna no rodapé."""
@@ -236,7 +253,7 @@ class MainApp(ctk.CTk):
         footer.pack_propagate(False)
 
         self.status_label = ctk.CTkLabel(
-            footer, text="Aguardando conexão com LMU...",
+            footer, text=_("waiting_connection"),
             font=("JetBrains Mono", 10), text_color=COLORS["text_secondary"],
         )
         self.status_label.pack(side="left", padx=12)
@@ -249,7 +266,7 @@ class MainApp(ctk.CTk):
 
         # Indicador do setup base
         self._base_label = ctk.CTkLabel(
-            footer, text="Nenhum setup base",
+            footer, text=_("no_setup_loaded"),
             font=("JetBrains Mono", 10), text_color=COLORS["text_secondary"],
         )
         self._base_label.pack(side="right", padx=(0, 20))
@@ -333,9 +350,26 @@ class MainApp(ctk.CTk):
         if self.engine and hasattr(self.engine, "export_data"):
             try:
                 path = self.engine.export_data()
-                messagebox.showinfo("Exportação", f"Dados exportados em:\n{path}")
+                messagebox.showinfo(_("export"), f"{_('success')}:\n{path}")
             except Exception as e:
-                messagebox.showerror("Erro", f"Erro ao exportar:\n{e}")
+                messagebox.showerror(_("error"), f"{_('error')}:\n{e}")
+
+    def _on_change_language(self, lang_code: str):
+        """Muda o idioma e salva na configuração."""
+        if self.engine and hasattr(self.engine, "config"):
+            self.engine.config.set("language", lang_code)
+            self.engine.config.save()
+            I18n.set_language(lang_code)
+            messagebox.showinfo(
+                _("language"),
+                _("msg_language_changed"),
+            )
+        else:
+            I18n.set_language(lang_code)
+            messagebox.showinfo(
+                _("language"),
+                _("msg_language_changed"),
+            )
 
     def _on_about(self):
         """Mostra janela Sobre com logo."""
