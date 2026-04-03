@@ -16,6 +16,7 @@ from gui.widgets import (
     TyreWidget,
     COLORS,
 )
+from gui.i18n import _
 
 
 class TelemetryTab(ctk.CTkFrame):
@@ -31,39 +32,39 @@ class TelemetryTab(ctk.CTkFrame):
         scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
         # ─── Tempos (card horizontal) ──────────────────────
-        times_card = Card(scroll, title="⏱ Tempos")
+        times_card = Card(scroll, title=f"⏱ {_('times')}")
         times_card.pack(fill="x", pady=(0, 8))
 
         row = ctk.CTkFrame(times_card, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=(0, 10))
 
-        self.val_lap = LabeledValue(row, label="Volta", value="0")
+        self.val_lap = LabeledValue(row, label=_("lap"), value="0")
         self.val_lap.pack(side="left", padx=10)
-        self.val_current = LabeledValue(row, label="Atual", value="--:--.---")
+        self.val_current = LabeledValue(row, label=_("current"), value="--:--.---")
         self.val_current.pack(side="left", padx=10)
-        self.val_last = LabeledValue(row, label="Última", value="--:--.---")
+        self.val_last = LabeledValue(row, label=_("last"), value="--:--.---")
         self.val_last.pack(side="left", padx=10)
-        self.val_best = LabeledValue(row, label="Melhor", value="--:--.---")
+        self.val_best = LabeledValue(row, label=_("best"), value="--:--.---")
         self.val_best.pack(side="left", padx=10)
-        self.val_delta = LabeledValue(row, label="Delta", value="+0.000")
+        self.val_delta = LabeledValue(row, label=_("delta"), value="+0.000")
         self.val_delta.pack(side="left", padx=10)
 
         # ─── Pneus (card 2×2) ─────────────────────────────
-        tyre_card = Card(scroll, title="🏎 Pneus")
+        tyre_card = Card(scroll, title=f"🏎 {_('tires')}")
         tyre_card.pack(fill="x", pady=(0, 8))
 
         top = ctk.CTkFrame(tyre_card, fg_color="transparent")
         top.pack(fill="x", padx=12)
-        self.tyre_fl = TyreWidget(top, position="FL")
+        self.tyre_fl = TyreWidget(top, position=_("front_left"))
         self.tyre_fl.pack(side="left", padx=8, pady=5, expand=True, fill="x")
-        self.tyre_fr = TyreWidget(top, position="FR")
+        self.tyre_fr = TyreWidget(top, position=_("front_right"))
         self.tyre_fr.pack(side="left", padx=8, pady=5, expand=True, fill="x")
 
         bot = ctk.CTkFrame(tyre_card, fg_color="transparent")
         bot.pack(fill="x", padx=12, pady=(0, 10))
-        self.tyre_rl = TyreWidget(bot, position="RL")
+        self.tyre_rl = TyreWidget(bot, position=_("rear_left"))
         self.tyre_rl.pack(side="left", padx=8, pady=5, expand=True, fill="x")
-        self.tyre_rr = TyreWidget(bot, position="RR")
+        self.tyre_rr = TyreWidget(bot, position=_("rear_right"))
         self.tyre_rr.pack(side="left", padx=8, pady=5, expand=True, fill="x")
 
         # ─── Veículo + Aero (lado a lado) ─────────────────
@@ -71,96 +72,96 @@ class TelemetryTab(ctk.CTkFrame):
         mid_frame.pack(fill="x", pady=(0, 8))
 
         # Veículo
-        veh_card = Card(mid_frame, title="🚗 Veículo")
+        veh_card = Card(mid_frame, title=f"🚗 {_('vehicle')}")
         veh_card.pack(side="left", fill="both", expand=True, padx=(0, 4))
 
         vrow = ctk.CTkFrame(veh_card, fg_color="transparent")
         vrow.pack(fill="x", padx=12, pady=(0, 10))
-        self.val_speed = LabeledValue(vrow, label="Vel.", value="0", unit="km/h")
+        self.val_speed = LabeledValue(vrow, label=_("vel"), value="0", unit="km/h")
         self.val_speed.pack(side="left", padx=8)
-        self.val_gear = LabeledValue(vrow, label="Marcha", value="N")
+        self.val_gear = LabeledValue(vrow, label=_("gear"), value="N")
         self.val_gear.pack(side="left", padx=8)
-        self.val_rpm = LabeledValue(vrow, label="RPM", value="0")
+        self.val_rpm = LabeledValue(vrow, label=_("rpm"), value="0")
         self.val_rpm.pack(side="left", padx=8)
-        self.val_fuel = LabeledValue(vrow, label="Comb.", value="0.0", unit="L")
+        self.val_fuel = LabeledValue(vrow, label=_("comb"), value="0.0", unit="L")
         self.val_fuel.pack(side="left", padx=8)
 
         # Aero + Freios
-        aero_card = Card(mid_frame, title="🌀 Aero & Freios")
+        aero_card = Card(mid_frame, title=f"🌀 {_('aero_brakes')}")
         aero_card.pack(side="left", fill="both", expand=True, padx=(4, 0))
 
         arow = ctk.CTkFrame(aero_card, fg_color="transparent")
         arow.pack(fill="x", padx=12, pady=(0, 10))
-        self.val_df_f = LabeledValue(arow, label="DF Front", value="0", unit="N")
+        self.val_df_f = LabeledValue(arow, label=_("df_front"), value="0", unit="N")
         self.val_df_f.pack(side="left", padx=8)
-        self.val_df_r = LabeledValue(arow, label="DF Rear", value="0", unit="N")
+        self.val_df_r = LabeledValue(arow, label=_("df_rear"), value="0", unit="N")
         self.val_df_r.pack(side="left", padx=8)
-        self.val_drag = LabeledValue(arow, label="Drag", value="0", unit="N")
+        self.val_drag = LabeledValue(arow, label=_("drag"), value="0", unit="N")
         self.val_drag.pack(side="left", padx=8)
-        self.val_brake_bias = LabeledValue(arow, label="Freio", value="--%")
+        self.val_brake_bias = LabeledValue(arow, label=_("brake"), value="--%")
         self.val_brake_bias.pack(side="left", padx=8)
 
         # ─── Condições climáticas ──────────────────────────
-        cond_card = Card(scroll, title="🌤 Condições")
+        cond_card = Card(scroll, title=f"🌤 {_('conditions')}")
         cond_card.pack(fill="x", pady=(0, 8))
 
         crow = ctk.CTkFrame(cond_card, fg_color="transparent")
         crow.pack(fill="x", padx=12, pady=(0, 10))
-        self.val_track_temp = LabeledValue(crow, label="Pista", value="--", unit="°C")
+        self.val_track_temp = LabeledValue(crow, label=_("track"), value="--", unit="°C")
         self.val_track_temp.pack(side="left", padx=8)
-        self.val_ambient_temp = LabeledValue(crow, label="Ar", value="--", unit="°C")
+        self.val_ambient_temp = LabeledValue(crow, label=_("air"), value="--", unit="°C")
         self.val_ambient_temp.pack(side="left", padx=8)
-        self.val_rain = LabeledValue(crow, label="Chuva", value="0%")
+        self.val_rain = LabeledValue(crow, label=_("rain"), value="0%")
         self.val_rain.pack(side="left", padx=8)
-        self.val_wetness = LabeledValue(crow, label="Pista Molhada", value="0%")
+        self.val_wetness = LabeledValue(crow, label=_("wet_track"), value="0%")
         self.val_wetness.pack(side="left", padx=8)
-        self.val_compound = LabeledValue(crow, label="Compound", value="---")
+        self.val_compound = LabeledValue(crow, label=_("compound"), value="---")
         self.val_compound.pack(side="left", padx=8)
 
         # ─── Combustível e Energia ─────────────────────────
-        fuel_card = Card(scroll, title="⛽ Combustível & Energia")
+        fuel_card = Card(scroll, title=f"⛽ {_('fuel_energy')}")
         fuel_card.pack(fill="x", pady=(0, 8))
 
         frow1 = ctk.CTkFrame(fuel_card, fg_color="transparent")
         frow1.pack(fill="x", padx=12, pady=(0, 4))
-        self.val_fuel_per_lap = LabeledValue(frow1, label="Consumo/Volta", value="--", unit="L")
+        self.val_fuel_per_lap = LabeledValue(frow1, label=_("consumption_lap"), value="--", unit="L")
         self.val_fuel_per_lap.pack(side="left", padx=8)
-        self.val_laps_remaining = LabeledValue(frow1, label="Voltas Restantes", value="--")
+        self.val_laps_remaining = LabeledValue(frow1, label=_("laps_left"), value="--")
         self.val_laps_remaining.pack(side="left", padx=8)
-        self.val_fuel_ratio = LabeledValue(frow1, label="Fuel Ratio", value="---")
+        self.val_fuel_ratio = LabeledValue(frow1, label=_("fuel_ratio"), value="---")
         self.val_fuel_ratio.pack(side="left", padx=8)
 
         frow2 = ctk.CTkFrame(fuel_card, fg_color="transparent")
         frow2.pack(fill="x", padx=12, pady=(0, 10))
-        self.val_battery = LabeledValue(frow2, label="Bateria", value="N/A")
+        self.val_battery = LabeledValue(frow2, label=_("battery"), value="N/A")
         self.val_battery.pack(side="left", padx=8)
-        self.val_energy_balance = LabeledValue(frow2, label="Energia", value="---")
+        self.val_energy_balance = LabeledValue(frow2, label=_("energy"), value="---")
         self.val_energy_balance.pack(side="left", padx=8)
-        self.val_energy_rec = LabeledValue(frow2, label="Recomendação", value="---")
+        self.val_energy_rec = LabeledValue(frow2, label=_("recommendation"), value="---")
         self.val_energy_rec.pack(side="left", padx=8)
 
         # ─── Estratégia de Sessão ──────────────────────────
-        strat_card = Card(scroll, title="🏁 Estratégia de Sessão")
+        strat_card = Card(scroll, title=f"🏁 {_('session_strategy')}")
         strat_card.pack(fill="x", pady=(0, 8))
 
         # Tipo de sessão
         srow1 = ctk.CTkFrame(strat_card, fg_color="transparent")
         srow1.pack(fill="x", padx=12, pady=(0, 4))
 
-        ctk.CTkLabel(srow1, text="Tipo:", width=50).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(srow1, text=_("type"), width=50).pack(side="left", padx=(0, 4))
         self._strat_mode = ctk.StringVar(value="quali")
         ctk.CTkRadioButton(
-            srow1, text="Qualificação", variable=self._strat_mode, value="quali"
+            srow1, text=_("qualification"), variable=self._strat_mode, value="quali"
         ).pack(side="left", padx=4)
         ctk.CTkRadioButton(
-            srow1, text="Corrida", variable=self._strat_mode, value="race"
+            srow1, text=_("race"), variable=self._strat_mode, value="race"
         ).pack(side="left", padx=4)
 
         # Duração
         srow2 = ctk.CTkFrame(strat_card, fg_color="transparent")
         srow2.pack(fill="x", padx=12, pady=(0, 4))
 
-        ctk.CTkLabel(srow2, text="Duração (min):", width=100).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(srow2, text=_("duration_min"), width=100).pack(side="left", padx=(0, 4))
         self._strat_duration = ctk.CTkEntry(srow2, width=60, placeholder_text="10")
         self._strat_duration.pack(side="left", padx=4)
         self._strat_duration.insert(0, "10")
@@ -169,7 +170,7 @@ class TelemetryTab(ctk.CTkFrame):
         srow3 = ctk.CTkFrame(strat_card, fg_color="transparent")
         srow3.pack(fill="x", padx=12, pady=(0, 4))
 
-        ctk.CTkLabel(srow3, text="⛽ Combustível:", width=100).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(srow3, text=f"⛽ {_('fuel_stops')}", width=100).pack(side="left", padx=(0, 4))
         self._strat_fuel_mult = ctk.StringVar(value="1")
         for val, label in [("1", "1x"), ("2", "2x"), ("3", "3x")]:
             ctk.CTkRadioButton(
@@ -179,7 +180,7 @@ class TelemetryTab(ctk.CTkFrame):
         srow4 = ctk.CTkFrame(strat_card, fg_color="transparent")
         srow4.pack(fill="x", padx=12, pady=(0, 4))
 
-        ctk.CTkLabel(srow4, text="🏎 Pneu:", width=100).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(srow4, text=f"🏎 {_('tire_stops')}", width=100).pack(side="left", padx=(0, 4))
         self._strat_tire_mult = ctk.StringVar(value="1")
         for val, label in [("1", "1x"), ("2", "2x"), ("3", "3x")]:
             ctk.CTkRadioButton(
@@ -190,7 +191,7 @@ class TelemetryTab(ctk.CTkFrame):
         srow5 = ctk.CTkFrame(strat_card, fg_color="transparent")
         srow5.pack(fill="x", padx=12, pady=(4, 4))
         ctk.CTkButton(
-            srow5, text="📊 Calcular Estratégia",
+            srow5, text=_("calculate_strategy"),
             command=self._calculate_strategy, width=200,
         ).pack(side="left", padx=4)
 
