@@ -243,7 +243,8 @@ class DeltaDisplay(ctk.CTkFrame):
         """Define o delta (chamado pela IA ou heurísticas)."""
         self._current_delta = delta
         self._current_index = current_index
-        self._desc.configure(text=description)
+        info_text = description or (f"Atual: {current_desc}" if current_desc else "")
+        self._desc.configure(text=info_text)
         self._update_display()
 
     def get_delta(self) -> int:

@@ -143,6 +143,8 @@ class SetupTab(ctk.CTkFrame):
         self.engine = engine
         self._chat_messages: list[dict] = []
         self._delta_widgets: dict[str, DeltaDisplay] = {}
+        self._dynamic_section_frame = None
+        self._dynamic_widget_keys: set[str] = set()
         self._build_ui()
         self._show_welcome()
 
@@ -399,7 +401,7 @@ class SetupTab(ctk.CTkFrame):
 
         _LEVEL_ORDER = {"basic": 0, "intermediate": 1, "advanced": 2}
         self._section_frames: list[tuple[ctk.CTkFrame, str]] = []
-        self._current_display_level = "basic"
+        self._current_display_level = "advanced"
         self._manual_deltas: dict[str, int] = {}  # Deltas editados manualmente
 
         for category, items, level in _PARAM_SECTIONS:
@@ -1379,6 +1381,74 @@ class SetupTab(ctk.CTkFrame):
         except Exception as e:
             logger.debug("Auto-sugestão falhou: %s", e)
 
+    def _rebuild_dynamic_adjustable_widgets(self, svm):
+        """Cria widgets extras para todos os parâmetros ajustáveis do setup."""
+        if self._dynamic_section_frame is not None:
+            self._dynamic_section_frame.destroy()
+            self._dynamic_section_frame = None
+
+        for key in list(self._dynamic_widget_keys):
+            self._delta_widgets.pop(key, None)
+        self._dynamic_widget_keys.clear()
+
+        if not svm or not hasattr(svm, "get_adjustable_params"):
+            return
+
+        all_params = list(svm.get_adjustable_params())
+        if not all_params:
+            return
+
+        sec = ctk.CTkFrame(self._sug_scroll, fg_color="transparent")
+        ctk.CTkLabel(
+            sec,
+            text="🧩 Todos os Parâmetros Ajustáveis do Setup",
+            font=("Arial", 11, "bold"),
+            text_color=COLORS["accent_cyan"],
+            anchor="w",
+        ).pack(fill="x", padx=8, pady=(6, 1))
+
+        all_params = sorted(all_params, key=lambda p: (p.section, p.name))
+        for p in all_params:
+            key = p.full_key
+            label = f"[{p.section}] {p.name}"
+            w = DeltaDisplay(
+                sec,
+                param_name=label,
+                param_key=key,
+                on_change=self._on_delta_manual_change,
+            )
+            w.pack(fill="x", padx=12, pady=1)
+            w.set_delta(0, current_index=p.index, current_desc=p.description)
+            self._delta_widgets[key] = w
+            self._dynamic_widget_keys.add(key)
+
+        sec.pack(fill="x")
+        self._dynamic_section_frame = sec
+
+    def _refresh_widget_current_values(self):
+        """Atualiza índices atuais em todos os widgets com base no setup."""
+        if not self.engine or not hasattr(self.engine, "get_base_setup"):
+            return
+
+        base_svm = self.engine.get_base_setup()
+        if not base_svm:
+            return
+
+        from core.brain import DELTA_TO_SVM
+        for key, widget in self._delta_widgets.items():
+            idx = None
+            if key in DELTA_TO_SVM:
+                for svm_key in DELTA_TO_SVM[key]:
+                    p = base_svm.get_param(svm_key)
+                    if p and p.adjustable:
+                        idx = p.index
+                        break
+            else:
+                p = base_svm.get_param(key)
+                if p and p.adjustable:
+                    idx = p.index
+            widget.set_delta(widget.get_delta(), current_index=idx)
+
     # ─── Setup Base ─────────────────────────────────────
 
     def _on_load_base(self):
@@ -1416,6 +1486,9 @@ class SetupTab(ctk.CTkFrame):
                     f"ou use os botões para gerar sugestões!",
                     sender="ai",
                 )
+
+                self._rebuild_dynamic_adjustable_widgets(svm)
+                self._refresh_widget_current_values()
 
                 # Notificar app (para atualizar footer/menu)
                 app = self.winfo_toplevel()
@@ -1461,6 +1534,12 @@ class SetupTab(ctk.CTkFrame):
         """Limpa o setup base."""
         if self.engine and hasattr(self.engine, "clear_base_setup"):
             self.engine.clear_base_setup()
+        if self._dynamic_section_frame is not None:
+            self._dynamic_section_frame.destroy()
+            self._dynamic_section_frame = None
+        for key in list(self._dynamic_widget_keys):
+            self._delta_widgets.pop(key, None)
+        self._dynamic_widget_keys.clear()
         self._base_info.configure(
             text="Nenhum setup carregado",
             text_color=COLORS["text_secondary"],
@@ -1664,7 +1743,10 @@ class SetupTab(ctk.CTkFrame):
 
         # Converter para formato SVM e atualizar no engine
         from core.brain import deltas_to_svm
-        svm_deltas = deltas_to_svm(current_deltas)
+        ai_deltas = {k: v for k, v in current_deltas.items() if "." not in k}
+        direct_svm_deltas = {k: v for k, v in current_deltas.items() if "." in k}
+        svm_deltas = deltas_to_svm(ai_deltas)
+        svm_deltas.update(direct_svm_deltas)
         self.engine._last_deltas = svm_deltas
         self.engine._last_display_deltas = current_deltas
 
@@ -1682,10 +1764,42 @@ class SetupTab(ctk.CTkFrame):
 
         mode_var = ctk.StringVar(value="edit_base")
         use_as_base_var = ctk.BooleanVar(value=True)
+        create_backup_var = ctk.BooleanVar(value=False)
+
+        def _apply_pending_fuel_target(svm_obj):
+            """Aplica FuelSetting absoluto (litros) se houver cálculo pendente."""
+            fuel_target = getattr(self.engine, "_pending_fuel_target_liters", None)
+            if not fuel_target:
+                return None
+
+            fuel_param = None
+            for p in svm_obj.params.values():
+                if p.name == "FuelSetting" and p.adjustable:
+                    fuel_param = p
+                    break
+
+            if fuel_param is None:
+                return "⚠️ FuelSetting não encontrado no setup."
+
+            old_index = fuel_param.index
+            new_index = max(0, min(int(fuel_target), 200))
+            if new_index != old_index:
+                import re
+                fuel_param.index = new_index
+                old_line = svm_obj.raw_lines[fuel_param.line_number]
+                new_line = re.sub(
+                    r"^(\w+Setting\s*=\s*)\d+(\s*//.*)$",
+                    rf"\g<1>{new_index}\2",
+                    old_line,
+                )
+                svm_obj.raw_lines[fuel_param.line_number] = new_line
+
+            return f"⛽ FuelSetting aplicado: {old_index} → {new_index} L"
 
         def _do_apply():
             mode = mode_var.get()
             use_as_base = use_as_base_var.get()
+            create_backup = create_backup_var.get()
 
             try:
                 if mode == "edit_base":
@@ -1695,14 +1809,24 @@ class SetupTab(ctk.CTkFrame):
                     from data.svm_parser import parse_svm, apply_deltas, save_svm
                     svm = parse_svm(str(base.filepath))
                     apply_deltas(svm, self.engine._last_deltas)
-                    save_svm(svm, backup_dir=str(self.engine.config.get(
-                        "backup_dir", Path(base.filepath).parent / "backups"
-                    )))
+                    fuel_note = _apply_pending_fuel_target(svm)
+                    if create_backup:
+                        save_svm(
+                            svm,
+                            backup=True,
+                            backup_dir=str(self.engine.config.get(
+                                "backup_dir", Path(base.filepath).parent / "backups"
+                            )),
+                        )
+                    else:
+                        save_svm(svm, backup=False)
                     win.destroy()
                     self._btn_apply.configure(state="disabled")
                     self._add_message(
                         f"✅ Mudanças aplicadas em: **{base.filepath.name}**\n"
-                        f"📂 Backup criado automaticamente.\n"
+                        f"✏️ Arquivo editado no mesmo local.\n"
+                        + ("📂 Backup criado antes de salvar.\n" if create_backup else "") +
+                        (f"{fuel_note}\n" if fuel_note else "") +
                         f"Volte para a pista e me diga como ficou!",
                         sender="ai",
                     )
@@ -1717,13 +1841,26 @@ class SetupTab(ctk.CTkFrame):
                     from data.svm_parser import parse_svm, apply_deltas, save_svm
                     svm = parse_svm(str(base.filepath))
                     apply_deltas(svm, self.engine._last_deltas)
-                    new_path = self.engine._generate_setorflow_path("ajustado")
+                    fuel_note = _apply_pending_fuel_target(svm)
+                    suggested = self.engine._generate_setorflow_path("ajustado")
+                    save_path = filedialog.asksaveasfilename(
+                        title="Salvar novo setup ajustado",
+                        initialdir=str(suggested.parent),
+                        initialfile=suggested.name,
+                        defaultextension=".svm",
+                        filetypes=[("Setup files", "*.svm"), ("Todos", "*.*")],
+                    )
+                    if not save_path:
+                        return
+
+                    new_path = Path(save_path)
                     save_svm(svm, output_path=new_path, backup=False)
                     win.destroy()
                     self._btn_apply.configure(state="disabled")
                     self._add_message(
                         f"✅ Novo setup criado: **{new_path.name}**\n"
                         f"📁 Salvo em: {new_path.parent}\n"
+                        + (f"{fuel_note}\n" if fuel_note else "") +
                         f"O arquivo base original NÃO foi alterado.",
                         sender="ai",
                     )
@@ -1751,14 +1888,23 @@ class SetupTab(ctk.CTkFrame):
                     from data.svm_parser import parse_svm, apply_deltas, save_svm
                     svm = parse_svm(filepath)
                     apply_deltas(svm, self.engine._last_deltas)
-                    save_svm(svm, backup_dir=str(
-                        Path(filepath).parent / "backups"
-                    ))
+                    fuel_note = _apply_pending_fuel_target(svm)
+                    if create_backup:
+                        save_svm(
+                            svm,
+                            output_path=filepath,
+                            backup=True,
+                            backup_dir=str(Path(filepath).parent / "backups"),
+                        )
+                    else:
+                        save_svm(svm, output_path=filepath, backup=False)
                     win.destroy()
                     self._btn_apply.configure(state="disabled")
                     self._add_message(
                         f"✅ Mudanças aplicadas em: **{Path(filepath).name}**\n"
-                        f"📂 Backup criado automaticamente.",
+                        f"✏️ Arquivo editado no mesmo local.\n"
+                        + ("📂 Backup criado antes de salvar.\n" if create_backup else "")
+                        + (f"{fuel_note}" if fuel_note else ""),
                         sender="ai",
                     )
                     if use_as_base:
@@ -1851,12 +1997,11 @@ class SetupTab(ctk.CTkFrame):
             font=("Arial", 11),
         ).pack(anchor="w", padx=25, pady=(0, 5))
 
-        # Checkbox: manter/pagar o arquivo base atual
-        keep_base_var = ctk.BooleanVar(value=True)
+        # Checkbox: criar backup antes de editar arquivo existente
         ctk.CTkCheckBox(
             content_scroll,
-            text="📄 Manter o arquivo base original (não apagar)",
-            variable=keep_base_var,
+            text="📂 Criar backup antes de aplicar (evita perda de dados)",
+            variable=create_backup_var,
             font=("Arial", 11),
         ).pack(anchor="w", padx=25, pady=(0, 15))
 
@@ -1896,6 +2041,37 @@ class SetupTab(ctk.CTkFrame):
                     anchor="w",
                 ).pack(anchor="w")
 
+                # Mostrar todos os parâmetros SVM afetados por este delta.
+                for sk in svm_keys:
+                    if base:
+                        p = base.get_param(sk)
+                        if p and p.adjustable:
+                            new_idx = max(0, p.index + delta_val)
+                            detail = f"      • {sk}: [{p.index}] → [{new_idx}]"
+                        else:
+                            detail = f"      • {sk}: (não ajustável/não encontrado)"
+                    else:
+                        detail = f"      • {sk}"
+                    ctk.CTkLabel(
+                        preview_inner,
+                        text=detail,
+                        font=("JetBrains Mono", 9),
+                        text_color=COLORS["text_secondary"],
+                        anchor="w",
+                    ).pack(anchor="w")
+
+            # Exibir combustível pendente (valor absoluto em litros) quando disponível.
+            pending_fuel = getattr(self.engine, "_pending_fuel_target_liters", None)
+            if pending_fuel:
+                fuel_preview = f"  ⛽ FuelSetting (absoluto): [{int(pending_fuel)}] L"
+                ctk.CTkLabel(
+                    preview_inner,
+                    text=fuel_preview,
+                    font=("JetBrains Mono", 10, "bold"),
+                    text_color=COLORS["accent_yellow"],
+                    anchor="w",
+                ).pack(anchor="w", pady=(4, 0))
+
     def _update_base_info(self, filepath):
         """Atualiza o label de info do setup base."""
         svm = self.engine.get_base_setup()
@@ -1907,6 +2083,8 @@ class SetupTab(ctk.CTkFrame):
                      f"🔧 {n_params} parâmetros ajustáveis",
                 text_color=COLORS["accent_green"],
             )
+            self._rebuild_dynamic_adjustable_widgets(svm)
+            self._refresh_widget_current_values()
 
     def _on_rate(self, score: float):
         """Avalia o resultado da última sugestão."""
@@ -1924,14 +2102,11 @@ class SetupTab(ctk.CTkFrame):
     # ─── Display ────────────────────────────────────────
 
     def _update_param_visibility(self):
-        """Mostra/esconde seções de parâmetros conforme nível da IA."""
-        _LEVEL_ORDER = {"basic": 0, "intermediate": 1, "advanced": 2}
-        current = _LEVEL_ORDER.get(self._current_display_level, 0)
+        """Mostra todas as seções de parâmetros para edição completa."""
         for frame, level in self._section_frames:
             frame.pack_forget()
         for frame, level in self._section_frames:
-            if _LEVEL_ORDER.get(level, 0) <= current:
-                frame.pack(fill="x")
+            frame.pack(fill="x")
 
     def display_suggestions(self, deltas: dict[str, int],
                             warnings: list[str] | None = None):
@@ -1948,6 +2123,11 @@ class SetupTab(ctk.CTkFrame):
                         if param and param.adjustable:
                             current_indices[delta_name] = (param.index, param.description)
                             break  # Pegar apenas o primeiro (FL para F/R)
+
+                for key in self._dynamic_widget_keys:
+                    param = base_svm.get_param(key)
+                    if param and param.adjustable:
+                        current_indices[key] = (param.index, param.description)
 
         for key, widget in self._delta_widgets.items():
             delta = deltas.get(key, 0)
@@ -1989,10 +2169,7 @@ class SetupTab(ctk.CTkFrame):
                 text=level_upper,
                 text_color=level_colors.get(level_upper, COLORS["text_secondary"]),
             )
-            # Expandir seções visíveis quando IA sobe de nível
-            if level != self._current_display_level:
-                self._current_display_level = level
-                self._update_param_visibility()
+            self._current_display_level = level
 
         # Atualizar deltas em tempo real a partir da última sugestão
         display_deltas = getattr(self.engine, '_last_display_deltas', None)
@@ -2012,6 +2189,8 @@ class SetupTab(ctk.CTkFrame):
                 delta = display_deltas.get(key, 0)
                 idx = current_indices.get(key)
                 widget.set_delta(delta, current_index=idx)
+
+        self._refresh_widget_current_values()
 
     # ─── Edição Manual de Deltas ────────────────────────
 
@@ -2034,11 +2213,17 @@ class SetupTab(ctk.CTkFrame):
             # Remover deltas antigos desse parâmetro e adicionar o novo
             from core.brain import DELTA_TO_SVM
             svm_keys = DELTA_TO_SVM.get(param_key, [])
-            for svm_key in svm_keys:
+            if svm_keys:
+                for svm_key in svm_keys:
+                    if new_delta == 0:
+                        self.engine._last_deltas.pop(svm_key, None)
+                    else:
+                        self.engine._last_deltas[svm_key] = new_delta
+            elif "." in param_key:
                 if new_delta == 0:
-                    self.engine._last_deltas.pop(svm_key, None)
+                    self.engine._last_deltas.pop(param_key, None)
                 else:
-                    self.engine._last_deltas[svm_key] = new_delta
+                    self.engine._last_deltas[param_key] = new_delta
 
         # Habilitar/desabilitar botão aplicar baseado em se há algum delta != 0
         has_any_delta = any(

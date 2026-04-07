@@ -855,7 +855,9 @@ class VirtualEngineer:
 
         # ─── 2. Calcular número de voltas ───
         estimated_laps = duration_sec / avg_lap_time
-        result["estimated_laps"] = int(estimated_laps)
+        # Estratégia conservadora: arredonda para cima para não faltar combustível.
+        estimated_laps_int = max(1, ceil(estimated_laps))
+        result["estimated_laps"] = estimated_laps_int
 
         # ─── 3. Calcular combustível ───
         fuel_per_lap = 0.0
@@ -894,9 +896,11 @@ class VirtualEngineer:
         except Exception:
             pass
 
-        fuel_adjusted = fuel_per_lap * fuel_mult
+        # Combustível em passos de 1L: sempre arredonda para cima.
+        fuel_adjusted_raw = fuel_per_lap * fuel_mult
+        fuel_adjusted = float(ceil(fuel_adjusted_raw)) if fuel_adjusted_raw > 0 else 0.0
         margin_laps = 2
-        fuel_total = estimated_laps * fuel_adjusted
+        fuel_total = estimated_laps_int * fuel_adjusted
         fuel_with_margin = fuel_total + (margin_laps * fuel_adjusted)
 
         result["fuel_per_lap"] = fuel_per_lap
@@ -908,10 +912,10 @@ class VirtualEngineer:
         if fuel_capacity > 0 and fuel_with_margin > 0:
             if fuel_with_margin <= fuel_capacity:
                 # Cabe em um stint
-                result["fuel_recommended"] = fuel_with_margin
+                result["fuel_recommended"] = float(ceil(fuel_with_margin))
                 result["stints"] = [{
                     "stint": 1,
-                    "fuel_load": fuel_with_margin,
+                    "fuel_load": float(ceil(fuel_with_margin)),
                     "laps": result["estimated_laps"],
                     "pit_after": False,
                 }]
@@ -920,29 +924,30 @@ class VirtualEngineer:
                 # Precisa de pit stops
                 n_stints = ceil(fuel_with_margin / fuel_capacity)
                 result["total_pits"] = n_stints - 1
-                result["fuel_recommended"] = fuel_capacity  # Stint 1 sempre cheio
+                result["fuel_recommended"] = float(int(round(fuel_capacity)))  # Stint 1 cheio
                 laps_per_stint = result["estimated_laps"] / n_stints
                 stints = []
                 remaining_laps = result["estimated_laps"]
                 for s in range(n_stints):
                     stint_laps = int(min(laps_per_stint, remaining_laps))
                     if s == 0:
-                        stint_fuel = fuel_capacity
+                        stint_fuel = int(round(fuel_capacity))
                     else:
                         stint_fuel = min(
                             (stint_laps + margin_laps) * fuel_adjusted,
                             fuel_capacity,
                         )
+                    stint_fuel = int(ceil(stint_fuel)) if stint_fuel > 0 else 0
                     stints.append({
                         "stint": s + 1,
-                        "fuel_load": round(stint_fuel, 1),
+                        "fuel_load": float(stint_fuel),
                         "laps": stint_laps,
                         "pit_after": s < n_stints - 1,
                     })
                     remaining_laps -= stint_laps
                 result["stints"] = stints
         else:
-            result["fuel_recommended"] = fuel_with_margin
+            result["fuel_recommended"] = float(ceil(fuel_with_margin)) if fuel_with_margin > 0 else 0.0
 
         # Peso do combustível (densidade média gasolina de corrida)
         FUEL_DENSITY_KG_PER_L = 0.742
@@ -1194,6 +1199,23 @@ class VirtualEngineer:
                 }
                 # Mapear features nomeadas para campos da tabela laps
                 feature_dict = self._features_to_dict(features)
+
+                # Persistir combustível para permitir média histórica por carro+pista.
+                curr_fuel = feature_dict.get("fuel", 0.0) or feature_dict.get("fuel_start", 0.0)
+                prev_fuel = 0.0
+                with self._state_lock:
+                    if self._lap_history:
+                        prev_feat = self._lap_history[-1].get("features", {})
+                        prev_fuel = prev_feat.get("fuel", 0.0) or prev_feat.get("fuel_start", 0.0)
+
+                if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel:
+                    lap_data["fuel_at_start"] = float(prev_fuel)
+                    lap_data["fuel_used"] = float(prev_fuel - curr_fuel)
+                elif curr_fuel > 0:
+                    # Primeira volta útil da sessão: sem delta confiável, mas guarda snapshot.
+                    lap_data["fuel_at_start"] = float(curr_fuel)
+                    lap_data["fuel_used"] = 0.0
+
                 for key in ("temp_fl_inner", "temp_fl_middle", "temp_fl_outer",
                             "temp_fr_inner", "temp_fr_middle", "temp_fr_outer",
                             "temp_rl_inner", "temp_rl_middle", "temp_rl_outer",
@@ -3045,8 +3067,55 @@ class VirtualEngineer:
 # PONTO DE ENTRADA
 # ================================================================
 
+def check_single_instance():
+    """
+    Verifica se já existe uma instância do app rodando.
+    Usa mutex no Windows para garantir instância única.
+    Retorna True se é a única instância, False se já existe outra.
+    """
+    import ctypes
+    from ctypes import wintypes
+    
+    # Nome único do mutex
+    mutex_name = "SectorFlowSetups_SingleInstance_Mutex"
+    
+    # Constantes do Windows
+    ERROR_ALREADY_EXISTS = 183
+    
+    # Criar mutex
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateMutexW(None, True, mutex_name)
+    last_error = kernel32.GetLastError()
+    
+    if last_error == ERROR_ALREADY_EXISTS:
+        # Já existe outra instância
+        kernel32.CloseHandle(handle)
+        return False
+    
+    # Primeira instância - manter mutex aberto
+    # (será liberado automaticamente quando o processo terminar)
+    return True
+
+
+def show_already_running_message():
+    """Mostra mensagem informando que o app já está rodando."""
+    import ctypes
+    ctypes.windll.user32.MessageBoxW(
+        0,
+        "O Sector Flow Setups já está em execução!\n\n"
+        "Verifique a barra de tarefas ou a bandeja do sistema.",
+        "Sector Flow Setups - Já em Execução",
+        0x40  # MB_ICONINFORMATION
+    )
+
+
 def main():
     """Função principal."""
+    # Verificar instância única ANTES de tudo
+    if not check_single_instance():
+        show_already_running_message()
+        sys.exit(0)
+    
     setup_logging()
 
     logger.info("=" * 60)

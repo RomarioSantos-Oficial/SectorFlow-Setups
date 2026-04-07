@@ -259,6 +259,8 @@ class MainApp(ctk.CTk):
 
     def _build_footer(self):
         """Barra de status moderna no rodapé."""
+        import webbrowser
+        
         # Limpar footer anterior se existir
         if hasattr(self, '_footer_frame') and self._footer_frame:
             self._footer_frame.destroy()
@@ -276,6 +278,20 @@ class MainApp(ctk.CTk):
             font=("JetBrains Mono", 10), text_color=COLORS["text_secondary"],
         )
         self.status_label.pack(side="left", padx=12)
+        
+        # Discord link
+        discord_btn = ctk.CTkButton(
+            footer,
+            text="💬 Discord",
+            font=("JetBrains Mono", 10, "bold"),
+            width=90,
+            height=24,
+            corner_radius=4,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            command=lambda: webbrowser.open("https://discord.gg/jJSVvKbFxs"),
+        )
+        discord_btn.pack(side="left", padx=(10, 0))
 
         self.car_label = ctk.CTkLabel(
             footer, text="",

@@ -25,5 +25,8 @@ pystray>=0.19.0
 # Detecção de processos do jogo
 psutil>=5.9.0
 
-# Empacotamento como .exe (apenas para build)
+# ═══════════════════════════════════════════════════════════════
+# Build / Empacotamento (apenas para criar .exe)
+# Instale separadamente com: pip install pyinstaller
+# ═══════════════════════════════════════════════════════════════
 # pyinstaller>=6.0.0

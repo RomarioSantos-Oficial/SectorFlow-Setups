@@ -58,6 +58,27 @@ Among the points that may change over time are:
 
 ## Installation
 
+### Quick Start (Recommended)
+
+**Option 1 - PowerShell:**
+```PowerShell
+.\start.ps1
+```
+
+**Option 2 - Command Prompt:**
+```batch
+start.bat
+```
+
+The script automatically:
+- Checks Python 3.10+ is installed
+- Creates virtual environment
+- Installs PyTorch (CPU version)
+- Installs all dependencies
+- Starts the application
+
+### Manual Installation
+
 ### 1. Download the project
 
 Download or clone this repository.
@@ -83,6 +104,18 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Build Executable
+
+To compile a standalone .exe (runs without Python):
+
+```PowerShell
+.\scripts\build.ps1
+```
+
+The executable will be created at `dist/SectorFlowSetups.exe`.
+
+For full build and installer instructions, see [docs/INSTALL.md](docs/INSTALL.md).
+
 ## First Use
 
 1. Open the application.
@@ -105,11 +138,11 @@ python main.py
 
 ## User Guides
 
-- Portuguese: [HOW_TO_USE_APPLICATION.md](HOW_TO_USE_APPLICATION.md)
-- English: [HOW_TO_USE_APPLICATION.md](HOW_TO_USE_APPLICATION.md)
-- Spanish: [HOW_TO_USE_THE_APPLICATION.md](HOW_TO_USE_THE_APPLICATION.md)
-- Japanese: [APPLICATON_USER_GUIDE_JA.md](APPLICATON_USER_GUIDE_JA.md)
-- Chinese: [APPLICATION_USER_GUIDE_ZH.md](APPLICATION_USER_GUIDE_ZH.md)
+- Portuguese: [COMO_FUNCIONA_APLICACAO.md](docs/guides/COMO_FUNCIONA_APLICACAO.md)
+- English: [HOW_TO_USE_APPLICATION.md](docs/guides/HOW_TO_USE_APPLICATION.md)
+- Spanish: [COMO_USAR_LA_APLICACION.md](docs/guides/COMO_USAR_LA_APLICACION.md)
+- Japanese: [APPLICATON_USER_GUIDE_JA.md](docs/guides/APPLICATON_USER_GUIDE_JA.md)
+- Chinese: [APPLICATION_USER_GUIDE_ZH.md](docs/guides/APPLICATION_USER_GUIDE_ZH.md)
 
 ## Important Notes
 

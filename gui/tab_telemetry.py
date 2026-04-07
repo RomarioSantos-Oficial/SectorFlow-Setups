@@ -7,6 +7,8 @@ combustível, condições climáticas e tempos de volta.
 
 from __future__ import annotations
 
+import math
+
 import customtkinter as ctk
 
 from gui.widgets import (
@@ -357,6 +359,11 @@ class TelemetryTab(ctk.CTkFrame):
             tire_mult=tire_mult,
         )
         self._last_strategy = result
+        # Persistir alvo de combustível para aplicação posterior no fluxo de setup.
+        if self.engine and result.get("fuel_recommended", 0) > 0:
+            self.engine._pending_fuel_target_liters = int(
+                math.ceil(float(result["fuel_recommended"]))
+            )
 
         # Formatar resultado
         lines = []
@@ -451,11 +458,50 @@ class TelemetryTab(ctk.CTkFrame):
             from config import BACKUPS_DIR
 
             apply_deltas(self.engine._current_svm, svm_deltas)
+
+            # Aplicar combustível recomendado como alvo absoluto (litros),
+            # não apenas como delta genérico.
+            fuel_note = ""
+            try:
+                fuel_target = float(self._last_strategy.get("fuel_recommended", 0.0) or 0.0)
+                if fuel_target > 0:
+                    fuel_param = None
+                    for p in self.engine._current_svm.params.values():
+                        if p.name == "FuelSetting" and p.adjustable:
+                            fuel_param = p
+                            break
+
+                    if fuel_param is not None:
+                        target_index = max(0, min(int(math.ceil(fuel_target)), 200))
+                        old_index = fuel_param.index
+                        if target_index != old_index:
+                            fuel_param.index = target_index
+                            old_line = self.engine._current_svm.raw_lines[fuel_param.line_number]
+                            import re
+                            new_line = re.sub(
+                                r"^(\w+Setting\s*=\s*)\d+(\s*//.*)$",
+                                rf"\g<1>{target_index}\2",
+                                old_line,
+                            )
+                            self.engine._current_svm.raw_lines[fuel_param.line_number] = new_line
+                        fuel_note = (
+                            f"\n⛽ FuelSetting ajustado: {old_index} → {target_index} L"
+                        )
+                    else:
+                        fuel_note = (
+                            "\n⚠️ FuelSetting não encontrado neste setup; "
+                            "aplique o combustível manualmente na garagem."
+                        )
+            except Exception as e:
+                fuel_note = f"\n⚠️ Falha ao aplicar combustível automático: {e}"
+
             save_svm(self.engine._current_svm, backup_dir=str(BACKUPS_DIR))
 
             # Feedback visual
             self._strat_result.configure(state="normal")
-            self._strat_result.insert("end", "\n\n✅ Deltas aplicados e setup salvo!")
+            self._strat_result.insert(
+                "end", f"\n\n✅ Deltas aplicados e setup salvo!{fuel_note}"
+            )
             self._strat_result.configure(state="disabled")
             self._strat_apply_btn.configure(state="disabled")
         else:
