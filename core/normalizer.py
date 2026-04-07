@@ -12,11 +12,20 @@ Os parâmetros de normalização são salvos junto com o modelo .pth.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger("LMU_VE.normalizer")
+
+
+@lru_cache(maxsize=256)
+def _cached_normalize_value(value: float, mean: float, std: float) -> float:
+    """Normaliza um valor único com cache."""
+    if std < 1e-8:
+        return 0.0
+    return (value - mean) / std
 
 
 class FeatureNormalizer:

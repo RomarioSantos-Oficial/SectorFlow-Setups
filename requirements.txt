@@ -2,8 +2,10 @@
 # Instalar com: pip install -r requirements.txt
 
 # Framework de IA (CPU only — menor tamanho)
+# Para instalação mais leve (sem CUDA), use:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
 torch
-torchvision
+# torchvision removido - não utilizado pelo projeto
 
 # GUI moderna com Dark Mode
 customtkinter>=5.2.0

@@ -387,6 +387,7 @@ class SetupNeuralNet(nn.Module):
         x = self.output_layer(x)
         return x
 
+    @torch.inference_mode()
     def predict(self, input_features: torch.Tensor,
                 max_delta: int = 3, epsilon: float = 0.0) -> dict[str, int]:
         """
@@ -408,15 +409,14 @@ class SetupNeuralNet(nn.Module):
         import random
 
         self.eval()
-        with torch.no_grad():
-            raw_output = self.forward(input_features)
+        raw_output = self.forward(input_features)
 
-            # Exploração: com probabilidade epsilon, adiciona ruído gaussiano
-            if epsilon > 0 and random.random() < epsilon:
-                noise = torch.randn_like(raw_output) * 0.3
-                raw_output = raw_output + noise
-                # Re-clipar para [-1, +1] após ruído
-                raw_output = raw_output.clamp(-1.0, 1.0)
+        # Exploração: com probabilidade epsilon, adiciona ruído gaussiano
+        if epsilon > 0 and random.random() < epsilon:
+            noise = torch.randn_like(raw_output) * 0.3
+            raw_output = raw_output + noise
+            # Re-clipar para [-1, +1] após ruído
+            raw_output = raw_output.clamp(-1.0, 1.0)
 
         deltas = {}
         for i, name in enumerate(self.output_names):

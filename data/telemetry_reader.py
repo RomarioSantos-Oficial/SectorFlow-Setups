@@ -18,6 +18,7 @@ import logging
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -29,29 +30,35 @@ logger = logging.getLogger("LMU_VE.telemetry")
 # Intervalos de amostragem
 SAMPLE_INTERVAL_SEC = 0.1  # 10 Hz de coleta
 
+# Limite máximo de amostras por volta (evita uso excessivo de memória)
+MAX_SAMPLES_PER_LAP = 2000  # ~200 segundos de volta
+
 
 @dataclass
 class LapAccumulator:
-    """Acumula amostras de telemetria dentro de uma volta."""
+    """Acumula amostras de telemetria dentro de uma volta.
+    
+    Usa deque com maxlen para limitar uso de memória em voltas longas.
+    """
     # Temperaturas dos pneus ICO × 4 rodas (12 valores) — soma + count
-    temp_samples: list[list[float]] = field(default_factory=lambda: [[] for _ in range(12)])
+    temp_samples: list[deque] = field(default_factory=lambda: [deque(maxlen=MAX_SAMPLES_PER_LAP) for _ in range(12)])
     # Pressões × 4
-    pressure_samples: list[list[float]] = field(default_factory=lambda: [[] for _ in range(4)])
+    pressure_samples: list[deque] = field(default_factory=lambda: [deque(maxlen=MAX_SAMPLES_PER_LAP) for _ in range(4)])
     # Desgaste × 4 (pegamos snapshot no final da volta)
     wear_start: tuple[float, ...] | None = None
     wear_end: tuple[float, ...] | None = None
     # Carga nos pneus × 4
-    load_samples: list[list[float]] = field(default_factory=lambda: [[] for _ in range(4)])
+    load_samples: list[deque] = field(default_factory=lambda: [deque(maxlen=MAX_SAMPLES_PER_LAP) for _ in range(4)])
     # Ride Height F/R
-    ride_height_f_samples: list[float] = field(default_factory=list)
-    ride_height_r_samples: list[float] = field(default_factory=list)
+    ride_height_f_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
+    ride_height_r_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
     # Downforce F/R
-    downforce_f_samples: list[float] = field(default_factory=list)
-    downforce_r_samples: list[float] = field(default_factory=list)
+    downforce_f_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
+    downforce_r_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
     # Dinâmica: pitch, roll, heave (via aceleração vertical)
-    pitch_samples: list[float] = field(default_factory=list)
-    roll_samples: list[float] = field(default_factory=list)
-    heave_samples: list[float] = field(default_factory=list)
+    pitch_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
+    roll_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
+    heave_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
     # Velocidade máxima
     max_speed: float = 0.0
     # Combustível
@@ -62,18 +69,18 @@ class LapAccumulator:
 
     def reset(self):
         """Reseta para nova volta."""
-        self.temp_samples = [[] for _ in range(12)]
-        self.pressure_samples = [[] for _ in range(4)]
+        self.temp_samples = [deque(maxlen=MAX_SAMPLES_PER_LAP) for _ in range(12)]
+        self.pressure_samples = [deque(maxlen=MAX_SAMPLES_PER_LAP) for _ in range(4)]
         self.wear_start = None
         self.wear_end = None
-        self.load_samples = [[] for _ in range(4)]
-        self.ride_height_f_samples = []
-        self.ride_height_r_samples = []
-        self.downforce_f_samples = []
-        self.downforce_r_samples = []
-        self.pitch_samples = []
-        self.roll_samples = []
-        self.heave_samples = []
+        self.load_samples = [deque(maxlen=MAX_SAMPLES_PER_LAP) for _ in range(4)]
+        self.ride_height_f_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
+        self.ride_height_r_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
+        self.downforce_f_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
+        self.downforce_r_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
+        self.pitch_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
+        self.roll_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
+        self.heave_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
         self.max_speed = 0.0
         self.fuel_start = 0.0
         self.fuel_end = 0.0
