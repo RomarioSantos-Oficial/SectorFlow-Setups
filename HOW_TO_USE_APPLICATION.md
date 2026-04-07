@@ -1,6 +1,18 @@
 # How to Use the Application
 
-This guide explains the practical step by step workflow for using Sector Flow Setups as an end user.
+> 🏁 **Exclusively for Le Mans Ultimate**
+
+[![Download .EXE](https://img.shields.io/badge/⬇️%20Download%20.EXE-v1.0--beta-brightgreen?style=for-the-badge)](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)
+
+**👉 [Download SectorFlowSetups.exe (no Python needed)](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)**
+
+1. Open the link above
+2. Scroll to **Assets**
+3. Click `SectorFlowSetups.exe` to download and run it
+
+> If Windows Defender blocks it: right-click → Properties → check **Unblock** → OK.
+
+---
 
 ## 1. What the Application Does
 
@@ -14,23 +26,22 @@ Sector Flow Setups helps you:
 
 ## 2. Before You Start
 
-Make sure:
+### Option A — Use the .exe (recommended, no Python needed)
 
-1. you are on Windows;
-2. Python and dependencies are installed;
-3. Le Mans Ultimate is installed;
-4. Shared Memory is available;
-5. you have at least one .svm file to use as a base setup.
+| Requirement | Detail |
+|---|---|
+| 🖥️ OS | Windows 10 or 11 (64-bit) |
+| 🎮 Game | **Le Mans Ultimate installed and running** |
+| 📁 Base file | An `.svm` setup file from LMU |
 
-Install dependencies:
+[Download the .exe here](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta) and double-click to run.
+
+### Option B — Run from source (developers)
+
+Make sure Python 3.10+ is installed, then:
 
 ```bash
 pip install -r requirements.txt
-```
-
-Run the app:
-
-```bash
 python main.py
 ```
 
@@ -38,8 +49,9 @@ python main.py
 
 ### Step 1. Start the application
 
-Run:
+**Option A (recommended):** double-click `SectorFlowSetups.exe`
 
+**Option B (developers):**
 ```bash
 python main.py
 ```
