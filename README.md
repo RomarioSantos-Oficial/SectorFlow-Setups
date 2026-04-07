@@ -1,341 +1,281 @@
-# Sector Flow Settings
+﻿<div align="center">
 
-A tool for Le Mans Ultimate focused on telemetry reading, configuration suggestions with heuristics and AI, and creation or editing of .svm files.
+# âš¡ SectorFlow Setups
 
-## Discord
+### ðŸ Exclusively for Le Mans Ultimate â€” Le Mans Ultimate exclusivo
 
-Join our Discord for support, questions, and news:
+[![Download .EXE](https://img.shields.io/badge/â¬‡ï¸%20Download%20.EXE-v1.0--beta-brightgreen?style=for-the-badge)](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord)](https://discord.gg/jJSVvKbFxs)
+[![Status](https://img.shields.io/badge/Status-Beta-orange?style=for-the-badge)]()
 
-**[https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+> **EN** â€” AI-powered setup assistant that reads live telemetry and suggests car configurations for **Le Mans Ultimate** only.  
+> **PT** â€” Assistente de setup com IA que lÃª telemetria ao vivo e sugere configuraÃ§Ãµes de carro exclusivamente para o **Le Mans Ultimate**.
 
-## Project Status
+</div>
 
-This project is in beta.
+---
 
-This means:
+## ðŸ‡§ðŸ‡· PortuguÃªs
 
-1. Features may change at any time;
+### ðŸ“¥ Download e InstalaÃ§Ã£o RÃ¡pida (Recomendado)
 
-2. Parts of the interface and flow may still receive adjustments;
+> NÃ£o precisa instalar Python. Baixe e execute diretamente!
 
-3. Errors, incomplete behaviors, or limitations may still exist;
+#### Passo 1 â€” Baixar o executÃ¡vel
 
-4. Improvements and updates should continue to accelerate frequently.
+**ðŸ‘‰ [Clique aqui para baixar o SectorFlow Setups v1.0-beta](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)**
 
-## Project Forks and Education
+1. Acesse o link acima
+2. Role atÃ© a seÃ§Ã£o **Assets**
+3. Clique em `SectorFlowSetups.exe` para baixar
 
-Users and developers can fork the project to study, adapt, and evolve the application.
+#### Passo 2 â€” Requisitos antes de executar
 
-If you wish, edit the application for your own use, testing, internal improvements, or learning; this is welcome.
+| Requisito | Detalhe |
+|---|---|
+| ðŸ–¥ï¸ Sistema Operacional | Windows 10 ou 11 (64-bit) |
+| ðŸŽ® Jogo | **Le Mans Ultimate instalado e rodando** |
+| ðŸ“ Arquivo base | Um arquivo `.svm` de setup do LMU |
 
-If you make significant modifications, it's ideal to document the changes well to facilitate maintenance and future integrations.
+> âš ï¸ **IMPORTANTE:** Esta ferramenta funciona **exclusivamente com Le Mans Ultimate**. NÃ£o Ã© compatÃ­vel com outros simuladores.
 
-## Updates
+#### Passo 3 â€” Executar o aplicativo
 
-The project should continue to receive improvements, fixes, and evolutions continuously.
+1. Localize o arquivo `SectorFlowSetups.exe` baixado
+2. **Clique duas vezes** para abrir
+   - Se o Windows Defender bloquear: clique em **"Mais informaÃ§Ãµes"** â†’ **"Executar assim mesmo"**
+3. O aplicativo abrirÃ¡ automaticamente
 
-Among the points that may change over time are:
+#### Passo 4 â€” Primeiro uso
 
-1. Interface;
-
-2. Quality of AI suggestions;
-
-3. Language support;
-
-4. Configuration flow;
-
-5. Performance and stability.
-
-## Requirements
-
-1. Windows.
-
-2. Python 3.10 or higher.
-
-3. Le Mans Ultimate installed.
-
-4. An .svm file to use as a configuration base.
-
-## Installation
-
-### Quick Start (Recommended)
-
-**Option 1 - PowerShell:**
-```PowerShell
-.\start.ps1
+```
+1. Abra o Le Mans Ultimate
+2. Aguarde o indicador LMU ficar VERDE no app
+3. VÃ¡ para a aba "Setup"
+4. Clique em "Carregar .svm" e escolha seu setup base
+5. Entre na pista e complete pelo menos 1 volta
+6. Volte ao app â†’ clique em "SugestÃµes IA" ou "HeurÃ­sticas"
+7. Aplique as sugestÃµes e teste na pista!
 ```
 
-**Option 2 - Command Prompt:**
-```batch
+#### Regras de Uso
+
+- âœ… Apenas para **Le Mans Ultimate**
+- âœ… Jogo deve estar **aberto e rodando** para conectar
+- âœ… Precisa de um arquivo `.svm` como base de setup
+- âŒ NÃ£o funciona com rFactor 2, ACC ou outros sims
+- âŒ NÃ£o funciona sem o jogo instalado (modo telemetria limitado)
+
+#### SoluÃ§Ã£o de Problemas RÃ¡pida
+
+<details>
+<summary>ðŸ”´ O app abre mas nÃ£o conecta ao jogo</summary>
+
+1. Confirme que o **Le Mans Ultimate estÃ¡ aberto**
+2. Verifique se a **Shared Memory** estÃ¡ ativada nas configuraÃ§Ãµes do LMU
+3. Tente reiniciar o aplicativo com o jogo jÃ¡ aberto
+4. Veja os logs em `%APPDATA%\SectorFlowSetups\logs\`
+
+</details>
+
+<details>
+<summary>ðŸ”´ O app nÃ£o sugere nada</summary>
+
+1. Complete **pelo menos 1 volta completa** na pista
+2. Confirme que carregou um arquivo `.svm` de base
+3. Verifique se a aba **Telemetria** exibe dados ao vivo (nÃºmeros mudando)
+
+</details>
+
+<details>
+<summary>ðŸ”´ A IA parece fraca no inÃ­cio</summary>
+
+Isso Ã© **normal e esperado**. No inÃ­cio, o sistema depende mais de heurÃ­sticas e vai melhorando conforme vocÃª completa voltas e envia feedback. Com mais dados, as sugestÃµes ficam mais precisas.
+
+</details>
+
+<details>
+<summary>ðŸ”´ Windows bloqueou o .exe</summary>
+
+1. Clique com o botÃ£o direito no `SectorFlowSetups.exe`
+2. Selecione **Propriedades**
+3. Na parte inferior, marque **"Desbloquear"**
+4. Clique em **OK** e execute novamente
+
+</details>
+
+---
+
+## ðŸ‡ºðŸ‡¸ English
+
+### ðŸ“¥ Download & Quick Install (Recommended)
+
+> No Python installation required. Download and run directly!
+
+#### Step 1 â€” Download the executable
+
+**ðŸ‘‰ [Click here to download SectorFlow Setups v1.0-beta](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)**
+
+1. Open the link above
+2. Scroll to the **Assets** section
+3. Click `SectorFlowSetups.exe` to download
+
+#### Step 2 â€” Requirements before running
+
+| Requirement | Details |
+|---|---|
+| ðŸ–¥ï¸ Operating System | Windows 10 or 11 (64-bit) |
+| ðŸŽ® Game | **Le Mans Ultimate installed and running** |
+| ðŸ“ Base file | An `.svm` setup file from LMU |
+
+> âš ï¸ **IMPORTANT:** This tool works **exclusively with Le Mans Ultimate**. It is not compatible with other simulators.
+
+#### Step 3 â€” Run the application
+
+1. Locate the downloaded `SectorFlowSetups.exe`
+2. **Double-click** to open
+   - If Windows Defender blocks it: click **"More info"** â†’ **"Run anyway"**
+3. The application will open automatically
+
+#### Step 4 â€” First use
+
+```
+1. Open Le Mans Ultimate
+2. Wait for the LMU indicator to turn GREEN in the app
+3. Go to the "Setup" tab
+4. Click "Load .svm" and choose your base setup file
+5. Go on track and complete at least 1 lap
+6. Return to the app â†’ click "AI Suggestions" or "Heuristics"
+7. Apply the suggestions and test on track!
+```
+
+#### Usage Rules
+
+- âœ… Only for **Le Mans Ultimate**
+- âœ… Game must be **open and running** to connect
+- âœ… Requires an `.svm` file as setup base
+- âŒ Does not work with rFactor 2, ACC or other sims
+- âŒ Does not work without the game installed (limited telemetry mode)
+
+#### Quick Troubleshooting
+
+<details>
+<summary>ðŸ”´ The app opens but won't connect to the game</summary>
+
+1. Confirm **Le Mans Ultimate is open**
+2. Check that **Shared Memory** is enabled in LMU settings
+3. Try restarting the app with the game already running
+4. Check logs at `%APPDATA%\SectorFlowSetups\logs\`
+
+</details>
+
+<details>
+<summary>ðŸ”´ The app doesn't suggest anything</summary>
+
+1. Complete **at least 1 full lap** on track
+2. Confirm you loaded a base `.svm` file
+3. Check that the **Telemetry** tab shows live data (numbers changing)
+
+</details>
+
+<details>
+<summary>ðŸ”´ The AI seems weak at the start</summary>
+
+This is **normal and expected**. At the beginning, the system relies more on heuristics and improves as you complete laps and provide feedback. With more data, the suggestions become more accurate.
+
+</details>
+
+<details>
+<summary>ðŸ”´ Windows blocked the .exe</summary>
+
+1. Right-click on `SectorFlowSetups.exe`
+2. Select **Properties**
+3. At the bottom, check **"Unblock"**
+4. Click **OK** and run again
+
+</details>
+
+---
+
+## ðŸ’¬ Discord
+
+Join our community for support, questions, and updates:
+
+**[ðŸ‘‰ https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+
+---
+
+## ðŸ› ï¸ For Developers â€” Run from Source (EN/PT)
+
+<details>
+<summary>Click to expand / Clique para expandir</summary>
+
+### Requirements / Requisitos
+- Python 3.10+
+- Le Mans Ultimate installed
+
+### Setup
+
+```powershell
+# Clone the repo / Clone o repositÃ³rio
+git clone https://github.com/RomarioSantos-Oficial/SectorFlow-Setups.git
+cd SectorFlow-Setups
+
+# Run with auto-setup / Execute com configuraÃ§Ã£o automÃ¡tica
+.\start.ps1
+# or / ou
 start.bat
 ```
 
-The script automatically:
-- Checks Python 3.10+ is installed
-- Creates virtual environment
-- Installs PyTorch (CPU version)
-- Installs all dependencies
-- Starts the application
+The script automatically installs all dependencies and starts the app.  
+O script instala todas as dependÃªncias automaticamente e inicia o app.
 
-### Manual Installation
-
-### 1. Download the project
-
-Download or clone this repository.
-
-### 2. Create a virtual environment
-
-In PowerShell, within the project folder:
-
-```PowerShell
-python -m venv.venv
-.\.venv\Scripts\Activate.ps1
-```
-
-### 3. Install dependencies
-
-```PowerShell
-pip install -r requirements.txt
-```
-
-### 4. Run the application
-
-```PowerShell
-python main.py
-```
-
-### Build Executable
-
-To compile a standalone .exe (runs without Python):
-
-```PowerShell
-.\scripts\build.ps1
-```
-
-The executable will be created at `dist/SectorFlowSetups.exe`.
-
-For full build and installer instructions, see [docs/INSTALL.md](docs/INSTALL.md).
-
-## First Use
-
-1. Open the application.
-
-2. Open Le Mans Ultimate.
-
-3. Wait for the LMU indicator to show that a connection has been established.
-
-4. Go to the Setup tab.
-
-5. Click Load .svm.
-
-6. Choose a base configuration.
-
-7. Enter the track and complete a few laps.
-
-8. Ask for suggestions from AI or heuristics.
-
-9. Create a new configuration or edit an existing one.
-
-## User Guides
-
-- Portuguese: [COMO_FUNCIONA_APLICACAO.md](docs/guides/COMO_FUNCIONA_APLICACAO.md)
-- English: [HOW_TO_USE_APPLICATION.md](docs/guides/HOW_TO_USE_APPLICATION.md)
-- Spanish: [COMO_USAR_LA_APLICACION.md](docs/guides/COMO_USAR_LA_APLICACION.md)
-- Japanese: [APPLICATON_USER_GUIDE_JA.md](docs/guides/APPLICATON_USER_GUIDE_JA.md)
-- Chinese: [APPLICATION_USER_GUIDE_ZH.md](docs/guides/APPLICATION_USER_GUIDE_ZH.md)
-
-## Important Notes
-
-1. The application attempts to automatically detect the Le Mans Ultimate path in Windows.
-
-2. If the game is not open, the application continues trying to connect.
-
-3. If the game is not installed, the application opens, but the settings functionality is limited.
-
-4. The database and logs are automatically created in %APPDATA%/SectorFlowSetups.
-
-5. The interface supports 5 languages (Portuguese, English, Spanish, Japanese, Chinese) and can be changed at any time via the Settings tab.
-
-##Main Structure
-
-- main.py: entry point.
-
-- config.py: paths and settings.
-
-- gui/: interface.
-
-- core/: AI, heuristics, and training.
-
-- data/: database, configuration analyzer, and telemetry.
-
-- adapter/: shared memory connection.
-
-## Changelog
-
-### v1.2 — 2026-04-07
-- Full i18n coverage for all 5 languages (pt-br, en, es, ja, zh): chat system messages, strategy results, and all UI labels are now translated
-- Added `ThermalMapWidget` for tire temperature visualization in the Telemetry tab
-- Expanded track POIs from 9 to 20 circuits
-- Added IES (Setup Efficiency Index) badge in the Setup tab
-- Added lap estimate with confidence indicator in Telemetry
-- SECTORFLOW output filename preview before applying adjustments
-- Safety: `validate_dependencies()` standalone function added
-- Fixed `HeuristicSuggestion` field mismatch (rule_name / condition / explanation)
-
-### v1.1 — previous
-- Multi-language support (pt-br, en, es, ja, zh) via Settings tab
-- LM Studio local model integration
-- Real-time language switching without restart
-- Autonomous learning system improvements
-
-## Quick Troubleshooting
-
-### The app opens but does not connect to the game
-
-1. Check if the LMU is open.
-
-2. Check if shared memory is working.
-
-3. Check the logs in the user folder.
-
-### The app opens but doesn't suggest anything
-
-1. Complete at least one lap.
-
-2. Confirm that you have loaded a configuration database.
-
-3. Check if the Telemetry tab shows live data.
-
-## The AI ​​seems to fail at the beginning
-
-This is expected. There's no way the system can rely more on heuristics and improvements as it records laps and feedback.
-
-# Sector Flow Setups
-
-Ferramenta para Le Mans Ultimate focada em leitura de telemetria, sugestoes de setup com heuristicas e IA, e criacao ou edicao de arquivos .svm.
-
-## Discord
-
-Entre no nosso Discord para suporte, duvidas e novidades:
-
-**[https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
-
-## Estado do Projeto
-
-Este projeto esta em estado beta.
-
-Isso significa:
-
-1. funcionalidades podem mudar a qualquer momento;
-2. partes da interface e do fluxo ainda podem receber ajustes;
-3. erros, comportamentos incompletos ou limitacoes ainda podem existir;
-4. melhorias e atualizacoes devem continuar acontecendo com frequencia.
-
-## Forks e Edicao do Projeto
-
-Usuarios e desenvolvedores podem fazer fork do projeto para estudar, adaptar e evoluir a aplicacao.
-
-Se voce quiser editar a aplicacao para uso proprio, testes, melhorias internas ou aprendizado, esse fluxo e bem-vindo.
-
-Se fizer modificacoes importantes, o ideal e documentar bem as mudancas para facilitar manutencao e futuras integracoes.
-
-## Atualizacoes
-
-O projeto deve continuar recebendo melhorias, correcoes e evolucoes de forma continua.
-
-Entre os pontos que podem mudar ao longo do tempo estao:
-
-1. interface;
-2. qualidade das sugestoes da IA;
-3. suporte a idiomas;
-4. fluxo de configuracao;
-5. desempenho e estabilidade.
-
-## Requisitos
-
-1. Windows.
-2. Python 3.10 ou superior.
-3. Le Mans Ultimate instalado.
-4. Um arquivo .svm para usar como setup base.
-
-## Instalacao
-
-### 1. Baixar o projeto
-
-Baixe ou clone este repositorio.
-
-### 2. Criar ambiente virtual
-
-No PowerShell, dentro da pasta do projeto:
+### Manual install / InstalaÃ§Ã£o manual
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-### 3. Instalar dependencias
-
-```powershell
 pip install -r requirements.txt
-```
-
-### 4. Executar a aplicacao
-
-```powershell
 python main.py
 ```
 
-## Primeiro Uso
+</details>
 
-1. Abra a aplicacao.
-2. Abra o Le Mans Ultimate.
-3. Espere o indicador LMU mostrar que houve conexao.
-4. Va para a aba Setup.
-5. Clique em Carregar .svm.
-6. Escolha um setup base.
-7. Entre na pista e complete algumas voltas.
-8. Peca sugestoes pela IA ou heuristicas.
-9. Crie um novo setup ou edite um setup existente.
+---
 
-## Guias de Uso
+## ðŸ“‹ Project Status / Estado do Projeto
 
-- Portugues: [COMO_FUNCIONA_APLICACAO.md](COMO_FUNCIONA_APLICACAO.md)
-- English: [HOW_TO_USE_APPLICATION.md](HOW_TO_USE_APPLICATION.md)
-- Espanol: [COMO_USAR_LA_APLICACION.md](COMO_USAR_LA_APLICACION.md)
-- Japanese: [APPLICATON_USER_GUIDE_JA.md](APPLICATON_USER_GUIDE_JA.md)
-- Chinese: [APPLICATION_USER_GUIDE_ZH.md](APPLICATION_USER_GUIDE_ZH.md)
+This project is in **beta**. Features may change, bugs may exist, and improvements are ongoing.  
+Este projeto estÃ¡ em **beta**. Funcionalidades podem mudar, bugs podem existir, e melhorias sÃ£o contÃ­nuas.
 
-## Observacoes Importantes
+## ðŸ“œ Changelog
 
-1. A aplicacao tenta detectar automaticamente o caminho do Le Mans Ultimate no Windows.
-2. Se o jogo nao estiver aberto, a aplicacao continua tentando conectar.
-3. Se o jogo nao estiver instalado, a aplicacao abre, mas a funcionalidade de setups fica limitada.
-4. O banco e os logs sao criados automaticamente em %APPDATA%/SectorFlowSetups.
-5. A interface ainda esta em portugues; o suporte real a troca de idioma ainda precisa ser implementado.
+### v1.0-beta â€” 2026-04-07
+- First public release with standalone `.exe`
+- Full i18n for 5 languages (pt-br, en, es, ja, zh)
+- AI + heuristics setup suggestion engine
+- Live telemetry reading via Shared Memory
+- Autonomous learning system
+- `ThermalMapWidget` for tire temperature visualization
+- IES (Setup Efficiency Index) badge
 
-## Estrutura Principal
+---
 
-- main.py: ponto de entrada.
-- config.py: caminhos e configuracoes.
-- gui/: interface.
-- core/: IA, heuristicas e treinamento.
-- data/: banco, parser de setup e telemetria.
-- adapter/: conexao com Shared Memory.
+## ðŸ‘¥ User Guides / Guias de Uso
 
-## Solucao de Problemas Rapida
+| Language | Link |
+|---|---|
+| ðŸ‡§ðŸ‡· PortuguÃªs | [COMO_FUNCIONA_APLICACAO.md](docs/guides/COMO_FUNCIONA_APLICACAO.md) |
+| ðŸ‡ºðŸ‡¸ English | [HOW_TO_USE_APPLICATION.md](docs/guides/HOW_TO_USE_APPLICATION.md) |
+| ðŸ‡ªðŸ‡¸ EspaÃ±ol | [COMO_USAR_LA_APLICACION.md](docs/guides/COMO_USAR_LA_APLICACION.md) |
+| ðŸ‡¯ðŸ‡µ æ—¥æœ¬èªž | [APPLICATON_USER_GUIDE_JA.md](docs/guides/APPLICATON_USER_GUIDE_JA.md) |
+| ðŸ‡¨ðŸ‡³ ä¸­æ–‡ | [APPLICATION_USER_GUIDE_ZH.md](docs/guides/APPLICATION_USER_GUIDE_ZH.md) |
 
-### O app abre mas nao conecta ao jogo
+---
 
-1. Verifique se o LMU esta aberto.
-2. Verifique se a Shared Memory esta funcionando.
-3. Verifique os logs na pasta do usuario.
+<div align="center">
 
-### O app abre mas nao sugere nada
+**âš¡ SectorFlow Setups â€” Built for Le Mans Ultimate / Feito para Le Mans Ultimate âš¡**
 
-1. Complete pelo menos uma volta.
-2. Confirme se carregou um setup base.
-3. Veja se a aba Telemetria mostra dados ao vivo.
+</div>
 
-### A IA parece fraca no inicio
-
-Isso e esperado. No comeco o sistema depende mais de heuristicas e melhora conforme registra voltas e feedback.
