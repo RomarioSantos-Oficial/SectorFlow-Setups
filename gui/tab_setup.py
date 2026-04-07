@@ -400,6 +400,7 @@ class SetupTab(ctk.CTkFrame):
         _LEVEL_ORDER = {"basic": 0, "intermediate": 1, "advanced": 2}
         self._section_frames: list[tuple[ctk.CTkFrame, str]] = []
         self._current_display_level = "basic"
+        self._manual_deltas: dict[str, int] = {}  # Deltas editados manualmente
 
         for category, items, level in _PARAM_SECTIONS:
             sec = ctk.CTkFrame(self._sug_scroll, fg_color="transparent")
@@ -411,7 +412,10 @@ class SetupTab(ctk.CTkFrame):
             ).pack(fill="x", padx=8, pady=(6, 1))
 
             for key, label in items:
-                w = DeltaDisplay(sec, param_name=label)
+                w = DeltaDisplay(
+                    sec, param_name=label, param_key=key,
+                    on_change=self._on_delta_manual_change,
+                )
                 w.pack(fill="x", padx=12, pady=1)
                 self._delta_widgets[key] = w
 
@@ -1651,9 +1655,18 @@ class SetupTab(ctk.CTkFrame):
         """Aplica as sugestões — pergunta qual arquivo usar como destino."""
         if not self.engine or not hasattr(self.engine, "apply_suggestions"):
             return
-        if not self.engine._last_deltas:
+
+        # Obter deltas atuais (IA + modificações manuais do usuário)
+        current_deltas = self._get_all_current_deltas()
+        if not current_deltas:
             self._add_message("Nenhuma sugestão para aplicar.", sender="system")
             return
+
+        # Converter para formato SVM e atualizar no engine
+        from core.brain import deltas_to_svm
+        svm_deltas = deltas_to_svm(current_deltas)
+        self.engine._last_deltas = svm_deltas
+        self.engine._last_display_deltas = current_deltas
 
         base = self.engine.get_base_setup() if hasattr(self.engine, 'get_base_setup') else None
 
@@ -1999,6 +2012,52 @@ class SetupTab(ctk.CTkFrame):
                 delta = display_deltas.get(key, 0)
                 idx = current_indices.get(key)
                 widget.set_delta(delta, current_index=idx)
+
+    # ─── Edição Manual de Deltas ────────────────────────
+
+    def _on_delta_manual_change(self, param_key: str, new_delta: int):
+        """Chamado quando o usuário modifica manualmente um delta via botões +/-."""
+        self._manual_deltas[param_key] = new_delta
+
+        # Atualizar engine._last_display_deltas para refletir a mudança
+        if self.engine:
+            if not hasattr(self.engine, '_last_display_deltas') or not self.engine._last_display_deltas:
+                self.engine._last_display_deltas = {}
+            self.engine._last_display_deltas[param_key] = new_delta
+
+            # Também atualiza _last_deltas (formato SVM)
+            from core.brain import deltas_to_svm
+            # Converter o delta individual para formato SVM
+            svm_delta = deltas_to_svm({param_key: new_delta})
+            if not hasattr(self.engine, '_last_deltas') or not self.engine._last_deltas:
+                self.engine._last_deltas = {}
+            # Remover deltas antigos desse parâmetro e adicionar o novo
+            from core.brain import DELTA_TO_SVM
+            svm_keys = DELTA_TO_SVM.get(param_key, [])
+            for svm_key in svm_keys:
+                if new_delta == 0:
+                    self.engine._last_deltas.pop(svm_key, None)
+                else:
+                    self.engine._last_deltas[svm_key] = new_delta
+
+        # Habilitar/desabilitar botão aplicar baseado em se há algum delta != 0
+        has_any_delta = any(
+            widget.get_delta() != 0 for widget in self._delta_widgets.values()
+        )
+        self._btn_apply.configure(
+            state="normal" if has_any_delta else "disabled"
+        )
+
+        logger.debug("Delta manual: %s = %d", param_key, new_delta)
+
+    def _get_all_current_deltas(self) -> dict[str, int]:
+        """Retorna todos os deltas atuais (IA + modificações manuais)."""
+        deltas = {}
+        for key, widget in self._delta_widgets.items():
+            delta = widget.get_delta()
+            if delta != 0:
+                deltas[key] = delta
+        return deltas
 
     # ─── Auto-suggest callbacks ─────────────────────────
 

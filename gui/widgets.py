@@ -117,14 +117,25 @@ class LabeledValue(ctk.CTkFrame):
 
 class DeltaDisplay(ctk.CTkFrame):
     """Delta de ajuste sugerido pela IA com visual moderno.
-    Mostra: nome | valor_atual → valor_novo | delta | descrição
+    Mostra: nome | valor_atual → valor_novo | delta | botões +/- | descrição
+    O usuário pode ajustar manualmente o delta usando os botões +/-.
     """
 
-    def __init__(self, master, param_name: str = "", **kwargs):
+    def __init__(self, master, param_name: str = "",
+                 on_change: callable = None,
+                 param_key: str = "",
+                 max_delta: int = 5,
+                 **kwargs):
         super().__init__(master, corner_radius=8,
                          fg_color=COLORS["bg_card"],
                          border_width=1, border_color=COLORS["separator"],
                          **kwargs)
+        self._param_key = param_key or param_name
+        self._on_change = on_change
+        self._max_delta = max_delta
+        self._current_delta = 0
+        self._current_index: int | None = None
+
         inner = ctk.CTkFrame(self, fg_color="transparent")
         inner.pack(fill="x", padx=10, pady=6)
 
@@ -151,17 +162,58 @@ class DeltaDisplay(ctk.CTkFrame):
                                      text_color=COLORS["text_primary"])
         self._new_val.pack(side="left")
 
+        # Botão - (diminuir)
+        self._btn_minus = ctk.CTkButton(
+            right_frame, text="−", width=28, height=28,
+            font=("Arial", 14, "bold"),
+            fg_color=COLORS["accent_red"], hover_color="#cc3355",
+            corner_radius=6,
+            command=self._on_minus,
+        )
+        self._btn_minus.pack(side="left", padx=(8, 2))
+
+        # Delta label
         self._delta = ctk.CTkLabel(right_frame, text="─ 0",
                                    font=("JetBrains Mono", 14, "bold"),
-                                   text_color=COLORS["text_secondary"])
-        self._delta.pack(side="left", padx=(8, 0))
+                                   text_color=COLORS["text_secondary"],
+                                   width=60)
+        self._delta.pack(side="left", padx=(2, 2))
+
+        # Botão + (aumentar)
+        self._btn_plus = ctk.CTkButton(
+            right_frame, text="+", width=28, height=28,
+            font=("Arial", 14, "bold"),
+            fg_color=COLORS["accent_green"], hover_color="#009955",
+            corner_radius=6,
+            command=self._on_plus,
+        )
+        self._btn_plus.pack(side="left", padx=(2, 0))
+
         self._desc = ctk.CTkLabel(right_frame, text="", font=("Arial", 9),
                                   text_color=COLORS["text_secondary"])
         self._desc.pack(side="left", padx=(8, 0))
 
-    def set_delta(self, delta: int, description: str = "",
-                  current_index: int | None = None,
-                  current_desc: str = ""):
+    def _on_minus(self):
+        """Diminui o delta em 1 índice."""
+        new_delta = max(-self._max_delta, self._current_delta - 1)
+        if new_delta != self._current_delta:
+            self._current_delta = new_delta
+            self._update_display()
+            if self._on_change:
+                self._on_change(self._param_key, self._current_delta)
+
+    def _on_plus(self):
+        """Aumenta o delta em 1 índice."""
+        new_delta = min(self._max_delta, self._current_delta + 1)
+        if new_delta != self._current_delta:
+            self._current_delta = new_delta
+            self._update_display()
+            if self._on_change:
+                self._on_change(self._param_key, self._current_delta)
+
+    def _update_display(self):
+        """Atualiza a exibição do delta e valores."""
+        delta = self._current_delta
         if delta > 0:
             text, color = f"▲ +{delta}", COLORS["accent_green"]
         elif delta < 0:
@@ -169,25 +221,41 @@ class DeltaDisplay(ctk.CTkFrame):
         else:
             text, color = "─ 0", COLORS["text_secondary"]
         self._delta.configure(text=text, text_color=color)
-        self._desc.configure(text=description)
 
         # Mostrar valor atual → novo quando disponível
-        if current_index is not None and delta != 0:
-            new_index = max(0, current_index + delta)
-            self._current_val.configure(text=f"[{current_index}]")
+        if self._current_index is not None and delta != 0:
+            new_index = max(0, self._current_index + delta)
+            self._current_val.configure(text=f"[{self._current_index}]")
             self._arrow.configure(text="→")
-            self._new_val.configure(
-                text=f"[{new_index}]",
-                text_color=color,
-            )
-        elif current_index is not None:
-            self._current_val.configure(text=f"[{current_index}]")
+            self._new_val.configure(text=f"[{new_index}]", text_color=color)
+        elif self._current_index is not None:
+            self._current_val.configure(text=f"[{self._current_index}]")
             self._arrow.configure(text="")
             self._new_val.configure(text="")
         else:
             self._current_val.configure(text="")
             self._arrow.configure(text="")
             self._new_val.configure(text="")
+
+    def set_delta(self, delta: int, description: str = "",
+                  current_index: int | None = None,
+                  current_desc: str = ""):
+        """Define o delta (chamado pela IA ou heurísticas)."""
+        self._current_delta = delta
+        self._current_index = current_index
+        self._desc.configure(text=description)
+        self._update_display()
+
+    def get_delta(self) -> int:
+        """Retorna o delta atual (pode ter sido modificado pelo usuário)."""
+        return self._current_delta
+
+    def reset(self):
+        """Reseta o delta para 0."""
+        self._current_delta = 0
+        self._current_index = None
+        self._desc.configure(text="")
+        self._update_display()
 
 
 # ─── Chat / Conversação ───────────────────────────────
