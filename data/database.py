@@ -157,7 +157,13 @@ class DatabaseManager:
         )
         self.conn.commit()
         logger.info("Novo carro registrado: %s [%s]", car_name, car_class)
-        return cursor.lastrowid
+        new_id = cursor.lastrowid
+        # Recalcular similaridades para incluir o novo carro
+        try:
+            self.calculate_car_similarity()
+        except Exception:
+            pass
+        return new_id
 
     def _normalize_class(self, car_class: str) -> str:
         """Normaliza a classe do carro para código interno."""
@@ -166,8 +172,12 @@ class DatabaseManager:
             return "hypercar"
         if "lmp2" in cl:
             return "lmp2"
-        if any(kw in cl for kw in ("gt3", "lmgt3", "gte")):
-            return "lmgt3"
+        if "lmp3" in cl:
+            return "lmp3"
+        if "gte" in cl:
+            return "gte"
+        if any(kw in cl for kw in ("gt3", "lmgt3")):
+            return "gt3"
         return cl if cl else "unknown"
 
     def get_car(self, car_id: int) -> dict | None:
@@ -958,6 +968,636 @@ class DatabaseManager:
         return result
 
     # ============================================================
+    # MEMÓRIA PERSISTENTE AVANÇADA (Aprendizagem de Sessões)
+    # ============================================================
+
+    def update_session_learning_data(self, car_id: int, track_id: int,
+                                     lap_data: dict, session_type: str = "practice",
+                                     weather: str = "dry"):
+        """
+        Atualiza os dados de aprendizagem de sessão para memória persistente.
+        Chamado ao final de cada volta válida.
+        
+        Args:
+            car_id: ID do carro
+            track_id: ID da pista
+            lap_data: Dict com dados da volta (lap_time, fuel_used, tire_wear, etc.)
+            session_type: Tipo de sessão (practice, quali, race)
+            weather: Condição climática (dry, wet)
+        """
+        import json
+        
+        try:
+            # Carregar memória existente
+            memory = self.load_car_track_memory(car_id, track_id) or {}
+            
+            # Incrementar contadores
+            total_laps = memory.get("total_laps", 0) + 1
+            learning_samples = memory.get("learning_samples", 0) + 1
+            
+            # Atualizar melhor volta
+            lap_time = lap_data.get("lap_time", 0)
+            current_best = memory.get("best_lap_time")
+            if lap_time > 0 and (not current_best or lap_time < current_best):
+                memory["best_lap_time"] = lap_time
+                memory["last_improved_at"] = datetime.now().isoformat()
+                
+                # Atualizar por condição climática
+                if weather == "dry":
+                    dry_best = memory.get("dry_best_lap")
+                    if not dry_best or lap_time < dry_best:
+                        memory["dry_best_lap"] = lap_time
+                else:
+                    wet_best = memory.get("wet_best_lap")
+                    if not wet_best or lap_time < wet_best:
+                        memory["wet_best_lap"] = lap_time
+            
+            # Atualizar setores
+            for i, sector_key in enumerate(["sector1_best", "sector2_best", "sector3_best"]):
+                sector_time = lap_data.get(f"sector{i+1}", 0)
+                if sector_time > 0:
+                    current = memory.get(sector_key)
+                    if not current or sector_time < current:
+                        memory[sector_key] = sector_time
+            
+            # Atualizar consumo de combustível (média móvel)
+            fuel_used = lap_data.get("fuel_used", 0)
+            if fuel_used > 0:
+                avg_fuel = memory.get("avg_fuel_per_lap", fuel_used)
+                # Média móvel ponderada (90% histórico + 10% novo)
+                memory["avg_fuel_per_lap"] = round(avg_fuel * 0.9 + fuel_used * 0.1, 3)
+                
+                # Min/Max
+                min_fuel = memory.get("min_fuel_per_lap", fuel_used)
+                max_fuel = memory.get("max_fuel_per_lap", fuel_used)
+                memory["min_fuel_per_lap"] = min(min_fuel, fuel_used)
+                memory["max_fuel_per_lap"] = max(max_fuel, fuel_used)
+            
+            # Atualizar desgaste de pneus
+            tire_wear = lap_data.get("tire_wear", {})
+            if tire_wear:
+                for wheel, key in [("fl", "tire_wear_avg_fl"), ("fr", "tire_wear_avg_fr"),
+                                   ("rl", "tire_wear_avg_rl"), ("rr", "tire_wear_avg_rr")]:
+                    wear = tire_wear.get(wheel, 0)
+                    if wear > 0:
+                        avg_wear = memory.get(key, wear)
+                        memory[key] = round(avg_wear * 0.9 + wear * 0.1, 4)
+                
+                # Classificar categoria de desgaste
+                avg_wear_all = sum(memory.get(k, 0) for k in 
+                                   ["tire_wear_avg_fl", "tire_wear_avg_fr",
+                                    "tire_wear_avg_rl", "tire_wear_avg_rr"]) / 4
+                if avg_wear_all < 0.005:
+                    memory["tire_wear_category"] = "low"
+                elif avg_wear_all < 0.015:
+                    memory["tire_wear_category"] = "medium"
+                elif avg_wear_all < 0.03:
+                    memory["tire_wear_category"] = "high"
+                else:
+                    memory["tire_wear_category"] = "extreme"
+            
+            # Atualizar temperaturas ideais
+            tire_temps = lap_data.get("tire_temps", {})
+            if tire_temps and lap_time == memory.get("best_lap_time"):
+                # Se for a melhor volta, estas são as temperaturas ideais
+                front_avg = (tire_temps.get("fl", 0) + tire_temps.get("fr", 0)) / 2
+                rear_avg = (tire_temps.get("rl", 0) + tire_temps.get("rr", 0)) / 2
+                if front_avg > 0:
+                    memory["ideal_tire_temp_f"] = round(front_avg, 1)
+                if rear_avg > 0:
+                    memory["ideal_tire_temp_r"] = round(rear_avg, 1)
+            
+            # Atualizar configurações de eletrônicos que funcionaram
+            if lap_time == memory.get("best_lap_time"):
+                tc = lap_data.get("tc_setting")
+                abs_val = lap_data.get("abs_setting")
+                brake_bias = lap_data.get("brake_bias")
+                if tc is not None:
+                    memory["best_tc_setting"] = tc
+                if abs_val is not None:
+                    memory["best_abs_setting"] = abs_val
+                if brake_bias is not None:
+                    memory["best_brake_bias"] = brake_bias
+            
+            # Atualizar contadores
+            memory["total_laps"] = total_laps
+            memory["learning_samples"] = learning_samples
+            
+            # Aumentar confiança da memória
+            confidence = memory.get("memory_confidence", 0)
+            memory["memory_confidence"] = min(1.0, confidence + 0.01)
+            
+            # Salvar
+            self.save_car_track_memory(car_id, track_id, memory)
+            
+        except Exception as e:
+            logger.debug("Erro ao atualizar dados de aprendizagem: %s", e)
+
+    def get_session_memory_summary(self, car_id: int, track_id: int) -> dict | None:
+        """
+        Retorna um resumo da memória persistente para exibição na GUI.
+        Formata os dados de forma amigável.
+        """
+        memory = self.load_car_track_memory(car_id, track_id)
+        if not memory:
+            return None
+        
+        summary = {
+            "has_data": True,
+            "total_sessions": memory.get("total_sessions", 0),
+            "total_laps": memory.get("total_laps", 0),
+            "best_lap_time": memory.get("best_lap_time"),
+            "dry_best": memory.get("dry_best_lap"),
+            "wet_best": memory.get("wet_best_lap"),
+            "avg_fuel_per_lap": memory.get("avg_fuel_per_lap"),
+            "tire_wear_category": memory.get("tire_wear_category", "unknown"),
+            "memory_confidence": memory.get("memory_confidence", 0),
+            "learning_samples": memory.get("learning_samples", 0),
+            "best_tc": memory.get("best_tc_setting"),
+            "best_abs": memory.get("best_abs_setting"),
+            "best_brake_bias": memory.get("best_brake_bias"),
+            "ideal_tire_temp_f": memory.get("ideal_tire_temp_f"),
+            "ideal_tire_temp_r": memory.get("ideal_tire_temp_r"),
+            "sectors": {
+                "s1": memory.get("sector1_best"),
+                "s2": memory.get("sector2_best"),
+                "s3": memory.get("sector3_best"),
+            },
+        }
+        
+        # Calcular "força" da memória
+        confidence = memory.get("memory_confidence", 0)
+        samples = memory.get("learning_samples", 0)
+        if samples >= 100 and confidence >= 0.8:
+            summary["memory_strength"] = "strong"
+        elif samples >= 30 and confidence >= 0.5:
+            summary["memory_strength"] = "moderate"
+        elif samples >= 10:
+            summary["memory_strength"] = "weak"
+        else:
+            summary["memory_strength"] = "minimal"
+        
+        return summary
+
+    def should_use_memory_for_setup(self, car_id: int, track_id: int) -> tuple[bool, dict]:
+        """
+        Determina se deve usar a memória persistente como base para criar setup.
+        
+        Returns:
+            Tuple (should_use: bool, reason_data: dict)
+        """
+        memory = self.load_car_track_memory(car_id, track_id)
+        
+        if not memory:
+            return False, {"reason": "no_memory", "message": "Sem dados anteriores para este carro/pista"}
+        
+        confidence = memory.get("memory_confidence", 0)
+        samples = memory.get("learning_samples", 0)
+        optimal_deltas = memory.get("optimal_deltas")
+        
+        # Critérios para usar memória
+        if samples >= 30 and confidence >= 0.5 and optimal_deltas:
+            return True, {
+                "reason": "sufficient_data",
+                "confidence": confidence,
+                "samples": samples,
+                "optimal_deltas": optimal_deltas,
+                "best_lap": memory.get("best_lap_time"),
+                "message": f"Usando memória de {samples} amostras (confiança: {confidence*100:.0f}%)"
+            }
+        
+        if samples >= 10 and optimal_deltas:
+            return True, {
+                "reason": "partial_data",
+                "confidence": confidence,
+                "samples": samples,
+                "optimal_deltas": optimal_deltas,
+                "best_lap": memory.get("best_lap_time"),
+                "message": f"Usando memória parcial ({samples} amostras) - recomendado continuar testando"
+            }
+        
+        return False, {
+            "reason": "insufficient_data",
+            "samples": samples,
+            "confidence": confidence,
+            "message": "Dados insuficientes - usando setup base padrão"
+        }
+
+    def save_effective_setup(self, car_id: int, track_id: int,
+                            setup_indices: dict, lap_time: float,
+                            weather: str = "dry"):
+        """
+        Salva um setup que produziu bom resultado para referência futura.
+        """
+        import json
+        
+        try:
+            memory = self.load_car_track_memory(car_id, track_id) or {}
+            
+            # Carregar lista de setups efetivos
+            effective_json = memory.get("effective_setups_json", "[]")
+            try:
+                effective_list = json.loads(effective_json)
+            except (json.JSONDecodeError, TypeError):
+                effective_list = []
+            
+            # Adicionar novo setup
+            new_entry = {
+                "indices": setup_indices,
+                "lap_time": lap_time,
+                "weather": weather,
+                "timestamp": datetime.now().isoformat(),
+            }
+            effective_list.append(new_entry)
+            
+            # Manter apenas os 10 melhores por condição
+            effective_list = sorted(effective_list, key=lambda x: x.get("lap_time", 999))[:10]
+            
+            memory["effective_setups_json"] = json.dumps(effective_list, ensure_ascii=False)
+            
+            # Atualizar best_setup_indices se for o melhor
+            best = memory.get("best_lap_time")
+            if not best or lap_time < best:
+                memory["best_setup_indices"] = setup_indices
+                memory["best_lap_time"] = lap_time
+            
+            self.save_car_track_memory(car_id, track_id, memory)
+            
+        except Exception as e:
+            logger.debug("Erro ao salvar setup efetivo: %s", e)
+
+    def get_recommended_setup_base(self, car_id: int, track_id: int,
+                                   weather: str = "dry") -> dict | None:
+        """
+        Retorna o setup base recomendado da memória persistente.
+        Prioriza setups que funcionaram nas mesmas condições.
+        """
+        import json
+        
+        memory = self.load_car_track_memory(car_id, track_id)
+        if not memory:
+            return None
+        
+        # Primeiro, tentar setups específicos para a condição
+        effective_json = memory.get("effective_setups_json", "[]")
+        try:
+            effective_list = json.loads(effective_json)
+            
+            # Filtrar por clima
+            same_weather = [s for s in effective_list if s.get("weather") == weather]
+            if same_weather:
+                best = min(same_weather, key=lambda x: x.get("lap_time", 999))
+                return best.get("indices")
+            
+            # Se não houver do mesmo clima, pegar o melhor geral
+            if effective_list:
+                best = min(effective_list, key=lambda x: x.get("lap_time", 999))
+                return best.get("indices")
+                
+        except (json.JSONDecodeError, TypeError):
+            pass
+        
+        # Fallback: best_setup_indices
+        return memory.get("best_setup_indices")
+
+    # ============================================================
+    # COMPARAÇÃO POR CATEGORIA (cross-class)
+    # Categorias: Hypercar, LMP2, LMP3, GTE, GT3
+    # ============================================================
+
+    # Mapa de similaridade por classe — independente de marca
+    _CLASS_SIMILARITY: dict[tuple[str, str], float] = {
+        ("GT3",       "GT3"):       1.00,
+        ("GTE",       "GTE"):       1.00,
+        ("LMP2",      "LMP2"):      1.00,
+        ("LMP3",      "LMP3"):      1.00,
+        ("Hypercar",  "Hypercar"):  1.00,
+        # Classes próximas
+        ("GT3",       "GTE"):       0.45,
+        ("GTE",       "GT3"):       0.45,
+        ("LMP2",      "Hypercar"):  0.40,
+        ("Hypercar",  "LMP2"):      0.40,
+        ("LMP3",      "LMP2"):      0.35,
+        ("LMP2",      "LMP3"):      0.35,
+    }
+
+    def _class_similarity(self, class_a: str, class_b: str) -> float:
+        """Retorna similaridade entre duas classes (0.0–1.0)."""
+        ca = (class_a or "").strip()
+        cb = (class_b or "").strip()
+        if ca == cb:
+            return 1.0
+        return self._CLASS_SIMILARITY.get((ca, cb), 0.0)
+
+    def update_class_benchmarks(self, car_class: str, track_id: int,
+                                 weather: str = "dry") -> None:
+        """
+        Recalcula benchmarks da classe nesta pista a partir de
+        todos os car_track_memory de carros da mesma classe.
+        Deve ser chamado ao final de cada sessão.
+        Suporta: Hypercar, LMP2, LMP3, GTE, GT3.
+        """
+        import json
+        import statistics
+
+        # Coletar todos os melhores tempos desta classe + pista
+        rows = self.conn.execute(
+            """SELECT ctm.best_lap_time,
+                      ctm.avg_fuel_per_lap,
+                      ctm.tire_wear_avg_fl, ctm.tire_wear_avg_fr,
+                      ctm.tire_wear_avg_rl, ctm.tire_wear_avg_rr,
+                      ctm.tire_wear_category,
+                      ctm.best_tc_setting, ctm.best_abs_setting,
+                      ctm.learning_samples,
+                      ctm.car_id
+               FROM car_track_memory ctm
+               JOIN cars c ON ctm.car_id = c.car_id
+               WHERE c.car_class = ?
+                 AND ctm.track_id = ?
+                 AND ctm.best_lap_time IS NOT NULL""",
+            (car_class, track_id),
+        ).fetchall()
+
+        if not rows:
+            return
+
+        lap_times = [r["best_lap_time"] for r in rows if r["best_lap_time"]]
+        if not lap_times:
+            return
+
+        avg_lap  = statistics.mean(lap_times)
+        med_lap  = statistics.median(lap_times)
+        fastest  = min(lap_times)
+        # top 10%: se temos ≥10 carros pega o 10º percentil, senão usa mínimo
+        sorted_times = sorted(lap_times)
+        top_idx  = max(0, int(len(sorted_times) * 0.10) - 1)
+        top10    = sorted_times[top_idx]
+
+        # Médias de combustível
+        fuel_vals = [r["avg_fuel_per_lap"] for r in rows if r["avg_fuel_per_lap"]]
+        avg_fuel  = statistics.mean(fuel_vals) if fuel_vals else None
+
+        # Médias de desgaste por roda
+        def _avg_col(col: str) -> float | None:
+            vals = [r[col] for r in rows if r[col] is not None]
+            return statistics.mean(vals) if vals else None
+
+        avg_fl = _avg_col("tire_wear_avg_fl")
+        avg_fr = _avg_col("tire_wear_avg_fr")
+        avg_rl = _avg_col("tire_wear_avg_rl")
+        avg_rr = _avg_col("tire_wear_avg_rr")
+
+        # Categoria de desgaste mais frequente
+        wear_cats = [r["tire_wear_category"] for r in rows if r["tire_wear_category"]]
+        typical_wear = max(set(wear_cats), key=wear_cats.count) if wear_cats else None
+
+        # Faixas de TC/ABS
+        tc_vals  = [r["best_tc_setting"]  for r in rows if r["best_tc_setting"]  is not None]
+        abs_vals = [r["best_abs_setting"] for r in rows if r["best_abs_setting"] is not None]
+        tc_range  = json.dumps({"min": min(tc_vals),  "max": max(tc_vals),
+                                "median": statistics.median(tc_vals)}) if tc_vals else None
+        abs_range = json.dumps({"min": min(abs_vals), "max": max(abs_vals),
+                                "median": statistics.median(abs_vals)}) if abs_vals else None
+
+        total_laps_sum = sum(r["learning_samples"] or 0 for r in rows)
+        cars_count     = len({r["car_id"] for r in rows})
+        confidence     = min(1.0, cars_count / 5.0 * 0.5 + len(lap_times) / 20.0 * 0.5)
+
+        self.conn.execute(
+            """INSERT INTO class_track_benchmarks
+               (car_class, track_id, avg_best_lap, median_best_lap, top10pct_lap,
+                fastest_ever, avg_fuel_per_lap, fuel_samples,
+                avg_tire_wear_fl, avg_tire_wear_fr, avg_tire_wear_rl, avg_tire_wear_rr,
+                typical_wear_cat, tc_range_json, abs_range_json,
+                weather_condition, cars_contributing, total_laps, confidence,
+                last_updated)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+               ON CONFLICT(car_class, COALESCE(track_id, 0), weather_condition)
+               DO UPDATE SET
+                   avg_best_lap      = excluded.avg_best_lap,
+                   median_best_lap   = excluded.median_best_lap,
+                   top10pct_lap      = excluded.top10pct_lap,
+                   fastest_ever      = MIN(fastest_ever, excluded.fastest_ever),
+                   avg_fuel_per_lap  = excluded.avg_fuel_per_lap,
+                   fuel_samples      = excluded.fuel_samples,
+                   avg_tire_wear_fl  = excluded.avg_tire_wear_fl,
+                   avg_tire_wear_fr  = excluded.avg_tire_wear_fr,
+                   avg_tire_wear_rl  = excluded.avg_tire_wear_rl,
+                   avg_tire_wear_rr  = excluded.avg_tire_wear_rr,
+                   typical_wear_cat  = excluded.typical_wear_cat,
+                   tc_range_json     = excluded.tc_range_json,
+                   abs_range_json    = excluded.abs_range_json,
+                   cars_contributing = excluded.cars_contributing,
+                   total_laps        = excluded.total_laps,
+                   confidence        = excluded.confidence,
+                   last_updated      = CURRENT_TIMESTAMP""",
+            (car_class, track_id, avg_lap, med_lap, top10, fastest,
+             avg_fuel, len(fuel_vals),
+             avg_fl, avg_fr, avg_rl, avg_rr, typical_wear,
+             tc_range, abs_range, weather,
+             cars_count, total_laps_sum, confidence),
+        )
+        self.conn.commit()
+        logger.info(
+            "Benchmarks %s × track%s atualizados (%d carros, %.3fs médio)",
+            car_class, track_id, cars_count, avg_lap,
+        )
+
+    def get_class_benchmark(self, car_class: str, track_id: int,
+                             weather: str = "dry") -> dict | None:
+        """
+        Retorna os benchmarks da classe nesta pista.
+        Usado para bootstrap de carros novos da mesma categoria.
+        """
+        row = self.conn.execute(
+            """SELECT * FROM class_track_benchmarks
+               WHERE car_class = ? AND track_id = ? AND weather_condition = ?""",
+            (car_class, track_id, weather),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_class_pattern(self, car_class: str, track_id: int,
+                           weather: str = "dry") -> dict | None:
+        """
+        Retorna o padrão de setup normalizado da classe nesta pista.
+        Útil para dar ponto de partida a carro novo da categoria.
+        """
+        row = self.conn.execute(
+            """SELECT * FROM class_setup_patterns
+               WHERE car_class = ? AND track_id = ? AND weather_condition = ?""",
+            (car_class, track_id, weather),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def calculate_car_similarity(self) -> int:
+        """
+        Popula car_similarity automaticamente para todos os carros
+        registrados, usando class + drivetrain + has_hybrid.
+        Retorna o número de pares atualizados.
+        Suporta: Hypercar, LMP2, LMP3, GTE, GT3.
+        """
+        cars = self.conn.execute(
+            "SELECT car_id, car_class, drivetrain, has_hybrid FROM cars",
+        ).fetchall()
+
+        inserted = 0
+        for i, a in enumerate(cars):
+            for b in cars[i + 1:]:
+                class_sim = self._class_similarity(
+                    a["car_class"] or "", b["car_class"] or "",
+                )
+                if class_sim == 0.0:
+                    continue  # Categorias incompatíveis — não armazena
+
+                # Bonus por mesma tração
+                if a["drivetrain"] and a["drivetrain"] == b["drivetrain"]:
+                    class_sim = min(1.0, class_sim + 0.07)
+
+                # Bonus se ambos têm (ou não têm) híbrido
+                if a["has_hybrid"] == b["has_hybrid"]:
+                    class_sim = min(1.0, class_sim + 0.05)
+
+                # Descrição da base de cálculo
+                basis = f"classe={a['car_class']}"
+                if a["drivetrain"] == b["drivetrain"]:
+                    basis += f",tracao={a['drivetrain']}"
+                if a["has_hybrid"] == b["has_hybrid"]:
+                    basis += f",hibrido={bool(a['has_hybrid'])}"
+
+                self.conn.execute(
+                    """INSERT INTO car_similarity
+                       (car_id_a, car_id_b, similarity, basis, auto_calculated, basis_detail)
+                       VALUES (?,?,?,?,1,?)
+                       ON CONFLICT(car_id_a, car_id_b)
+                       DO UPDATE SET
+                           similarity       = excluded.similarity,
+                           basis            = excluded.basis,
+                           basis_detail     = excluded.basis_detail,
+                           auto_calculated  = 1""",
+                    (a["car_id"], b["car_id"],
+                     round(class_sim, 3), basis, basis),
+                )
+                inserted += 1
+
+        self.conn.commit()
+        logger.info("car_similarity recalculado: %d pares", inserted)
+        return inserted
+
+    def get_cross_class_training_data(self, car_id: int,
+                                      track_id: int) -> list[dict]:
+        """
+        Retorna dados de treinamento de carros similares da mesma classe,
+        com peso reduzido (cross_class_weight < 1.0).
+        Útil para bootstrap de carros sem histórico.
+        Suporta todas as categorias: Hypercar, LMP2, LMP3, GTE, GT3.
+        """
+        # Buscar classe do carro alvo
+        car_row = self.conn.execute(
+            "SELECT car_class FROM cars WHERE car_id = ?", (car_id,),
+        ).fetchone()
+        if not car_row or not car_row["car_class"]:
+            return []
+
+        car_class = car_row["car_class"]
+
+        # Buscar carros similares (mesma classe, exceto o próprio)
+        similar = self.conn.execute(
+            """SELECT cs.car_id_b AS similar_car_id,
+                      cs.similarity
+               FROM car_similarity cs
+               WHERE cs.car_id_a = ?
+                 AND cs.similarity >= 0.6
+               UNION
+               SELECT cs.car_id_a AS similar_car_id,
+                      cs.similarity
+               FROM car_similarity cs
+               WHERE cs.car_id_b = ?
+                 AND cs.similarity >= 0.6
+               ORDER BY similarity DESC""",
+            (car_id, car_id),
+        ).fetchall()
+
+        if not similar:
+            # Fallback: qualquer carro da mesma classe
+            similar = self.conn.execute(
+                """SELECT car_id AS similar_car_id, 0.75 AS similarity
+                   FROM cars
+                   WHERE car_class = ? AND car_id != ?""",
+                (car_class, car_id),
+            ).fetchall()
+
+        result = []
+        for sim_row in similar:
+            sim_car_id = sim_row["similar_car_id"]
+            weight = round(float(sim_row["similarity"]) * 0.8, 3)  # peso reduzido
+
+            rows = self.conn.execute(
+                """SELECT td.*, ? AS cross_class_weight, ? AS source_car_id
+                   FROM training_data td
+                   WHERE td.car_id = ?
+                     AND td.track_id = ?
+                     AND td.is_valid = 1
+                   ORDER BY td.reward DESC
+                   LIMIT 50""",
+                (weight, sim_car_id, sim_car_id, track_id),
+            ).fetchall()
+
+            result.extend([dict(r) for r in rows])
+
+        logger.debug(
+            "cross_class_training: %d amostras de carros similares para %s na pista %d",
+            len(result), car_class, track_id,
+        )
+        return result
+
+    def get_car_performance_tier(self, car_id: int,
+                                  track_id: int) -> dict | None:
+        """
+        Compara o carro contra a média de sua classe nesta pista.
+        Retorna tier: 'elite', 'acima_media', 'abaixo_media' ou 'sem_referencia'.
+        """
+        memory = self.load_car_track_memory(car_id, track_id)
+        if not memory or not memory.get("best_lap_time"):
+            return None
+
+        car_row = self.conn.execute(
+            "SELECT car_class FROM cars WHERE car_id = ?", (car_id,),
+        ).fetchone()
+        if not car_row:
+            return None
+
+        car_class  = car_row["car_class"]
+        best_lap   = memory["best_lap_time"]
+        benchmark  = self.get_class_benchmark(car_class, track_id)
+
+        if not benchmark:
+            return {"tier": "sem_referencia", "car_best": best_lap,
+                    "class_avg": None, "gap_avg": None}
+
+        avg_lap  = benchmark.get("avg_best_lap")
+        top10    = benchmark.get("top10pct_lap")
+        gap_avg  = round(best_lap - avg_lap, 3) if avg_lap else None
+        gap_top  = round(best_lap - top10,   3) if top10  else None
+
+        if top10 and best_lap <= top10:
+            tier = "elite"
+        elif avg_lap and best_lap <= avg_lap:
+            tier = "acima_media"
+        else:
+            tier = "abaixo_media"
+
+        return {
+            "tier":              tier,
+            "car_best":          best_lap,
+            "class_avg":         avg_lap,
+            "class_top10":       top10,
+            "gap_to_avg":        gap_avg,
+            "gap_to_top10":      gap_top,
+            "cars_in_benchmark": benchmark.get("cars_contributing", 0),
+            "confidence":        benchmark.get("confidence", 0.0),
+        }
+
+    # ============================================================
     # SETUP LIBRARY (Biblioteca de setups para aprendizagem)
     # ============================================================
 
@@ -1384,6 +2024,7 @@ class DatabaseManager:
         """
         Aplica migrações incrementais ao banco de dados.
         Adiciona colunas de TC/ABS em ai_suggestions se faltantes.
+        Adiciona campos de memória persistente em car_track_memory.
         """
         # Detectar colunas existentes em ai_suggestions
         cursor = self.conn.execute(
@@ -1413,5 +2054,154 @@ class DatabaseManager:
                 )
                 logger.info("Migração: adicionada coluna %s "
                             "em ai_suggestions", col_name)
+
+        # ─── Migração: car_track_memory — novos campos de memória ───
+        cursor = self.conn.execute(
+            "PRAGMA table_info(car_track_memory)",
+        )
+        memory_cols = {row["name"] for row in cursor.fetchall()}
+
+        new_memory_fields = {
+            # Dados de performance detalhados
+            "sector1_best": "REAL",
+            "sector2_best": "REAL",
+            "sector3_best": "REAL",
+            "avg_fuel_per_lap": "REAL",
+            "min_fuel_per_lap": "REAL",
+            "max_fuel_per_lap": "REAL",
+            # Desgaste de pneus por categoria
+            "tire_wear_avg_fl": "REAL",
+            "tire_wear_avg_fr": "REAL",
+            "tire_wear_avg_rl": "REAL",
+            "tire_wear_avg_rr": "REAL",
+            "tire_wear_category": "TEXT",  # 'low', 'medium', 'high', 'extreme'
+            # Temperaturas ideais aprendidas
+            "ideal_tire_temp_f": "REAL",
+            "ideal_tire_temp_r": "REAL",
+            "ideal_brake_temp": "REAL",
+            # Estratégias que funcionaram
+            "best_tc_setting": "INTEGER",
+            "best_abs_setting": "INTEGER",
+            "best_brake_bias": "REAL",
+            # Dados de stint
+            "avg_stint_length": "INTEGER",
+            "best_stint_laps": "INTEGER",
+            # Condições de tempo
+            "dry_best_lap": "REAL",
+            "wet_best_lap": "REAL",
+            # Métricas de aprendizagem
+            "learning_samples": "INTEGER DEFAULT 0",
+            "last_improved_at": "TIMESTAMP",
+            # JSON com histórico de setups que funcionaram
+            "effective_setups_json": "TEXT",
+        }
+
+        for col_name, col_def in new_memory_fields.items():
+            if col_name not in memory_cols:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE car_track_memory "
+                        f"ADD COLUMN {col_name} {col_def}",
+                    )
+                    logger.info("Migração: adicionada coluna %s "
+                                "em car_track_memory", col_name)
+                except Exception as e:
+                    logger.debug("Erro ao adicionar %s: %s", col_name, e)
+
+        # ─── Migração: car_similarity — campos de cálculo automático ───
+        cursor = self.conn.execute("PRAGMA table_info(car_similarity)")
+        sim_cols = {row["name"] for row in cursor.fetchall()}
+        for col_name, col_def in {
+            "auto_calculated": "INTEGER DEFAULT 0",
+            "basis_detail": "TEXT",
+        }.items():
+            if col_name not in sim_cols:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE car_similarity ADD COLUMN {col_name} {col_def}",
+                    )
+                    logger.info("Migração: coluna %s em car_similarity", col_name)
+                except Exception as e:
+                    logger.debug("Erro ao adicionar %s em car_similarity: %s", col_name, e)
+
+        # ─── Migração: training_data — campos cross-class ───
+        cursor = self.conn.execute("PRAGMA table_info(training_data)")
+        td_cols = {row["name"] for row in cursor.fetchall()}
+        for col_name, col_def in {
+            "car_class": "TEXT",
+            "is_cross_class": "INTEGER DEFAULT 0",
+            "source_car_id": "INTEGER",
+            "cross_class_weight": "REAL DEFAULT 1.0",
+        }.items():
+            if col_name not in td_cols:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE training_data ADD COLUMN {col_name} {col_def}",
+                    )
+                    logger.info("Migração: coluna %s em training_data", col_name)
+                except Exception as e:
+                    logger.debug("Erro ao adicionar %s em training_data: %s", col_name, e)
+
+        # ─── Criar tabelas cross-class se não existirem ───
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS class_track_benchmarks (
+                benchmark_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                car_class           TEXT NOT NULL,
+                track_id            INTEGER REFERENCES tracks(track_id),
+                avg_best_lap        REAL,
+                median_best_lap     REAL,
+                top10pct_lap        REAL,
+                fastest_ever        REAL,
+                avg_fuel_per_lap    REAL,
+                fuel_samples        INTEGER DEFAULT 0,
+                avg_tire_wear_fl    REAL,
+                avg_tire_wear_fr    REAL,
+                avg_tire_wear_rl    REAL,
+                avg_tire_wear_rr    REAL,
+                typical_wear_cat    TEXT,
+                tc_range_json       TEXT,
+                abs_range_json      TEXT,
+                weather_condition   TEXT NOT NULL DEFAULT 'dry',
+                cars_contributing   INTEGER DEFAULT 0,
+                total_laps          INTEGER DEFAULT 0,
+                confidence          REAL DEFAULT 0.0,
+                last_updated        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_class_benchmarks_class
+                ON class_track_benchmarks(car_class);
+            CREATE INDEX IF NOT EXISTS idx_class_benchmarks_track
+                ON class_track_benchmarks(car_class, track_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_class_benchmarks_unique
+                ON class_track_benchmarks(car_class, COALESCE(track_id, 0), weather_condition);
+
+            CREATE TABLE IF NOT EXISTS class_setup_patterns (
+                pattern_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                car_class           TEXT NOT NULL,
+                track_id            INTEGER REFERENCES tracks(track_id),
+                weather_condition   TEXT NOT NULL DEFAULT 'dry',
+                norm_rear_wing      REAL,
+                norm_front_wing     REAL,
+                norm_spring_f       REAL,
+                norm_spring_r       REAL,
+                norm_camber_f       REAL,
+                norm_camber_r       REAL,
+                norm_arb_f          REAL,
+                norm_arb_r          REAL,
+                norm_brake_bias     REAL,
+                norm_ride_height_f  REAL,
+                norm_ride_height_r  REAL,
+                norm_tc_level       REAL,
+                norm_abs_level      REAL,
+                tendency_tags       TEXT,
+                effectiveness       REAL DEFAULT 0.5,
+                samples_count       INTEGER DEFAULT 0,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_class_patterns_class
+                ON class_setup_patterns(car_class, track_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_class_patterns_unique
+                ON class_setup_patterns(car_class, COALESCE(track_id, 0), weather_condition);
+        """)
 
         self.conn.commit()

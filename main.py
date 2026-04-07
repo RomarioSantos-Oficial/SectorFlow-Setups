@@ -1655,11 +1655,49 @@ class VirtualEngineer:
                             msg += f"⚠️ Problemas recorrentes: {', '.join(problems[:5])}\n"
                     msg += "A IA usará essa experiência para sugestões melhores."
                     self._on_trend_alert_callback(msg)
+
             else:
                 self._active_memory = None
                 self._memory_optimal_deltas = {}
                 self._session_history = []
+
+                # ── Bootstrap cross-class: tentar dados de carros similares ──
+                try:
+                    cross_data = self.db.get_cross_class_training_data(car_id, track_id)
+                    if cross_data and self._on_trend_alert_callback:
+                        car_row = self.db.conn.execute(
+                            "SELECT car_class FROM cars WHERE car_id = ?", (car_id,),
+                        ).fetchone()
+                        car_class = car_row["car_class"] if car_row else "categoria"
+                        self._on_trend_alert_callback(
+                            f"🆕 Carro novo nesta pista.\n"
+                            f"📚 Encontrados {len(cross_data)} dados de outros "
+                            f"carros da classe **{car_class}** — serão usados como "
+                            f"referência inicial."
+                        )
+                except Exception:
+                    pass
+
                 logger.info("Sem memória anterior para este carro × pista.")
+
+            # ── Tier de performance vs classe (sempre, independente de ter memória) ──
+            try:
+                tier_info = self.db.get_car_performance_tier(car_id, track_id)
+                if tier_info and self._on_trend_alert_callback:
+                    tier = tier_info.get("tier", "sem_referencia")
+                    bench_cars = tier_info.get("cars_in_benchmark", 0)
+                    conf = tier_info.get("confidence", 0.0)
+                    if tier != "sem_referencia" and bench_cars >= 2 and conf >= 0.3:
+                        icons = {"elite": "🏅", "acima_media": "📈", "abaixo_media": "📉"}
+                        icon = icons.get(tier, "📊")
+                        gap = tier_info.get("gap_to_avg")
+                        gap_str = f"{gap:+.3f}s vs média" if gap is not None else ""
+                        self._on_trend_alert_callback(
+                            f"{icon} **Posição na categoria:** {tier.replace('_', ' ')}\n"
+                            f"{gap_str} ({bench_cars} carros como referência)"
+                        )
+            except Exception:
+                pass
 
         except Exception as e:
             logger.debug("Erro ao carregar memória: %s", e)
@@ -1702,21 +1740,54 @@ class VirtualEngineer:
         """
         Atualiza a memória persistente após cada volta.
         Chamado de _on_lap_completed.
+        Usa o novo sistema de aprendizagem avançada.
         """
         try:
+            # ── Sistema de memória avançada: atualizar dados de aprendizagem ──
+            # Preparar dados da volta para o novo sistema
+            lap_learning_data = {
+                "lap_time": lap_time,
+                "fuel_used": feature_dict.get("fuel_used", 0),
+                "tire_wear": {
+                    "fl": feature_dict.get("wear_fl", 0),
+                    "fr": feature_dict.get("wear_fr", 0),
+                    "rl": feature_dict.get("wear_rl", 0),
+                    "rr": feature_dict.get("wear_rr", 0),
+                },
+                "tire_temps": {
+                    "fl": feature_dict.get("temp_fl_middle", 0),
+                    "fr": feature_dict.get("temp_fr_middle", 0),
+                    "rl": feature_dict.get("temp_rl_middle", 0),
+                    "rr": feature_dict.get("temp_rr_middle", 0),
+                },
+            }
+            
+            # TC/ABS/Brake settings se disponíveis no telemetry atual
+            try:
+                if hasattr(self, 'telemetry') and self.telemetry:
+                    live = self.telemetry.get_live_telemetry()
+                    if live:
+                        lap_learning_data["tc_setting"] = live.get("tc_setting")
+                        lap_learning_data["abs_setting"] = live.get("abs_setting")
+                        lap_learning_data["brake_bias"] = live.get("brake_bias")
+            except Exception:
+                pass
+            
+            # Determinar clima atual
+            weather = "dry"
+            if feature_dict.get("raining", 0) > 0.3:
+                weather = "wet"
+            
+            # Chamar novo sistema de atualização de aprendizagem
+            self.db.update_session_learning_data(
+                car_id=car_id,
+                track_id=track_id,
+                lap_data=lap_learning_data,
+                weather=weather,
+            )
+            
+            # ── Sistema legado: manter compatibilidade ──
             memory = self.db.load_car_track_memory(car_id, track_id) or {}
-
-            total_laps = memory.get("total_laps", 0) + 1
-            best_lap = memory.get("best_lap_time")
-            if best_lap is None or (lap_time > 0 and lap_time < best_lap):
-                best_lap = lap_time
-
-            # Média móvel ponderada do lap time
-            avg_lap = memory.get("avg_lap_time")
-            if avg_lap and avg_lap > 0:
-                avg_lap = avg_lap * 0.9 + lap_time * 0.1
-            else:
-                avg_lap = lap_time
 
             # Detectar problemas recorrentes
             problems = self._detect_all_problems(feature_dict)
@@ -1747,25 +1818,25 @@ class VirtualEngineer:
                 setup_indices = self._current_svm.get_all_indices()
                 setup_path = str(self._current_svm.filepath)
 
-            # Calcular confiança da memória
-            confidence = min(1.0, total_laps / 100)
+            # ── Salvar setup efetivo se for a melhor volta ──
+            best_lap = memory.get("best_lap_time")
+            if setup_indices and (best_lap is None or lap_time < best_lap):
+                self.db.save_effective_setup(
+                    car_id=car_id,
+                    track_id=track_id,
+                    setup_indices=setup_indices,
+                    lap_time=lap_time,
+                    weather=weather,
+                )
 
+            # Grip e bumpiness da pista
             data = {
-                "total_laps": total_laps,
-                "best_lap_time": best_lap,
-                "avg_lap_time": avg_lap,
                 "avg_grip": feature_dict.get("grip_avg"),
                 "avg_tire_wear_rate": feature_dict.get("wear_fl", 0),
                 "track_bumpiness": feature_dict.get("heave", 0),
                 "recurring_problems": sorted_problems,
-                "memory_confidence": confidence,
-                "last_session_at": "CURRENT_TIMESTAMP",
+                "typical_weather": weather if memory.get("total_laps", 0) < 10 else memory.get("typical_weather", "dry"),
             }
-
-            # Salvar o melhor setup se a volta for a melhor
-            if setup_indices and best_lap == lap_time:
-                data["best_setup_indices"] = setup_indices
-                data["best_setup_path"] = setup_path
 
             # Deltas ótimos: média ponderada com memória anterior
             if self._last_display_deltas:
@@ -1785,6 +1856,33 @@ class VirtualEngineer:
                     data["optimal_deltas"] = optimal
 
             self.db.save_car_track_memory(car_id, track_id, data)
+            
+            # ── Notificar GUI sobre dados salvos (a cada 10 voltas) ──
+            total_laps = memory.get("total_laps", 0) + 1
+            if total_laps % 10 == 0 and self._on_trend_alert_callback:
+                summary = self.db.get_session_memory_summary(car_id, track_id)
+                if summary:
+                    self._on_trend_alert_callback(
+                        f"📊 **Aprendizagem atualizada** ({total_laps} voltas)\n"
+                        f"• Melhor volta: {summary.get('best_lap_time', 'N/A'):.3f}s\n"
+                        f"• Consumo médio: {summary.get('avg_fuel_per_lap', 'N/A'):.2f}L/volta\n"
+                        f"• Desgaste: {summary.get('tire_wear_category', 'N/A')}\n"
+                        f"• Confiança da memória: {summary.get('memory_confidence', 0)*100:.0f}%"
+                    )
+
+            # ── Atualizar benchmarks da categoria (GT3, Hypercar, etc.) ──
+            car_row = self.db.conn.execute(
+                "SELECT car_class FROM cars WHERE car_id = ?", (car_id,),
+            ).fetchone()
+            if car_row and car_row["car_class"]:
+                try:
+                    self.db.update_class_benchmarks(
+                        car_class=car_row["car_class"],
+                        track_id=track_id,
+                        weather=weather,
+                    )
+                except Exception as e_bench:
+                    logger.debug("Erro ao atualizar benchmarks de classe: %s", e_bench)
 
         except Exception as e:
             logger.debug("Erro ao atualizar memória carro×pista: %s", e)

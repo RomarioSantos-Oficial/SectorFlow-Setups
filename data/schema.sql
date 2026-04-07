@@ -599,3 +599,129 @@ CREATE INDEX IF NOT EXISTS idx_comparison_car_track
 
 -- Adicionar colunas TC/ABS em ai_suggestions se não existirem
 -- (SQLite não suporta IF NOT EXISTS em ALTER TABLE, tratado no código)
+
+-- ============================================================
+-- 21. TABELA: class_track_benchmarks
+-- Agrega dados de performance de TODOS os carros de uma classe
+-- em uma pista, independente de marca/modelo.
+-- Categorias suportadas: Hypercar, LMP2, LMP3, GTE, GT3
+-- ============================================================
+CREATE TABLE IF NOT EXISTS class_track_benchmarks (
+    benchmark_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    car_class           TEXT NOT NULL,        -- "GT3", "Hypercar", "GTE", "LMP2", "LMP3"
+    track_id            INTEGER REFERENCES tracks(track_id),
+
+    -- Referências de tempo para a classe nesta pista
+    avg_best_lap        REAL,         -- Média dos melhores tempos da classe
+    median_best_lap     REAL,         -- Mediana dos melhores tempos
+    top10pct_lap        REAL,         -- Tempo referência elite (top 10%)
+    fastest_ever        REAL,         -- Melhor tempo absoluto registrado
+
+    -- Consumo e desgaste médios da CLASSE
+    avg_fuel_per_lap    REAL,
+    fuel_samples        INTEGER DEFAULT 0,
+    avg_tire_wear_fl    REAL,
+    avg_tire_wear_fr    REAL,
+    avg_tire_wear_rl    REAL,
+    avg_tire_wear_rr    REAL,
+    typical_wear_cat    TEXT,         -- "low" / "medium" / "high"
+
+    -- Faixas típicas de eletrônicos para a classe nesta pista
+    tc_range_json       TEXT,         -- JSON: {"min":1,"max":6,"median":3}
+    abs_range_json      TEXT,         -- JSON: {"min":1,"max":4,"median":2}
+
+    -- Condições climáticas dos dados
+    weather_condition   TEXT NOT NULL DEFAULT 'dry',
+
+    -- Metadados de confiança
+    cars_contributing   INTEGER DEFAULT 0,  -- Quantos carros distintos contribuíram
+    total_laps          INTEGER DEFAULT 0,
+    confidence          REAL DEFAULT 0.0,   -- 0.0 a 1.0
+
+    last_updated        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_benchmarks_class
+    ON class_track_benchmarks(car_class);
+CREATE INDEX IF NOT EXISTS idx_class_benchmarks_track
+    ON class_track_benchmarks(car_class, track_id);
+-- Índice único com COALESCE deve ser criado separadamente (SQLite não aceita expressões em UNIQUE inline)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_class_benchmarks_unique
+    ON class_track_benchmarks(car_class, COALESCE(track_id, 0), weather_condition);
+
+-- ============================================================
+-- 22. TABELA: class_setup_patterns
+-- Tendências de setup POR CLASSE + PISTA em valores
+-- normalizados (0.0 = mín, 1.0 = máx para a classe).
+-- Válido para qualquer carro da categoria, independente de marca.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS class_setup_patterns (
+    pattern_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    car_class           TEXT NOT NULL,
+    track_id            INTEGER REFERENCES tracks(track_id),
+    weather_condition   TEXT NOT NULL DEFAULT 'dry',
+
+    -- Valores normalizados 0.0–1.0 para a classe
+    norm_rear_wing      REAL,   -- 0.0=mínimo, 1.0=máximo da classe
+    norm_front_wing     REAL,
+    norm_spring_f       REAL,
+    norm_spring_r       REAL,
+    norm_camber_f       REAL,
+    norm_camber_r       REAL,
+    norm_arb_f          REAL,
+    norm_arb_r          REAL,
+    norm_brake_bias     REAL,
+    norm_ride_height_f  REAL,
+    norm_ride_height_r  REAL,
+    norm_tc_level       REAL,
+    norm_abs_level      REAL,
+
+    -- Tendências em JSON (tags geradas pela IA)
+    tendency_tags       TEXT,   -- JSON: ["asa_alta","suspensao_macia","frenagem_traseira"]
+
+    -- Efetividade deste padrão
+    effectiveness       REAL DEFAULT 0.5,
+    samples_count       INTEGER DEFAULT 0,
+
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_patterns_class
+    ON class_setup_patterns(car_class, track_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_class_patterns_unique
+    ON class_setup_patterns(car_class, COALESCE(track_id, 0), weather_condition);
+
+-- ============================================================
+-- VIEW: v_car_vs_class_benchmark
+-- Compara um carro específico contra a média de sua classe
+-- naquela pista. Mostra tier: elite / acima_media / abaixo.
+-- ============================================================
+CREATE VIEW IF NOT EXISTS v_car_vs_class_benchmark AS
+SELECT
+    c.car_name,
+    c.car_class,
+    t.track_name,
+    ctm.best_lap_time                                     AS car_best_lap,
+    ctb.avg_best_lap                                      AS class_avg_lap,
+    ctb.top10pct_lap                                      AS class_reference_lap,
+    ctb.fastest_ever                                      AS class_fastest_ever,
+    ROUND(ctm.best_lap_time - ctb.avg_best_lap, 3)        AS gap_to_class_avg,
+    ROUND(ctm.best_lap_time - ctb.top10pct_lap, 3)        AS gap_to_top10,
+    ctb.cars_contributing                                 AS class_data_from_cars,
+    ctb.confidence                                        AS benchmark_confidence,
+    CASE
+        WHEN ctb.top10pct_lap IS NOT NULL
+             AND ctm.best_lap_time <= ctb.top10pct_lap    THEN 'elite'
+        WHEN ctb.avg_best_lap IS NOT NULL
+             AND ctm.best_lap_time <= ctb.avg_best_lap    THEN 'acima_media'
+        WHEN ctb.avg_best_lap IS NOT NULL                 THEN 'abaixo_media'
+        ELSE 'sem_referencia'
+    END AS performance_tier
+FROM car_track_memory ctm
+JOIN cars c ON ctm.car_id = c.car_id
+JOIN tracks t ON ctm.track_id = t.track_id
+LEFT JOIN class_track_benchmarks ctb
+    ON ctb.car_class = c.car_class
+    AND ctb.track_id = ctm.track_id
+    AND ctb.weather_condition = 'dry';

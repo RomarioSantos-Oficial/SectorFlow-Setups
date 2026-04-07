@@ -904,10 +904,16 @@ class SetupTab(ctk.CTkFrame):
     _add_message = add_message
 
     def _on_phrase_click(self, text: str):
-        """Processa clique em frase sugerida."""
-        self._chat_input.delete(0, "end")
-        self._chat_input.insert(0, text)
-        self._on_send_message(None)
+        """Processa clique em frase sugerida de forma não-bloqueante."""
+        # Usar after() para não bloquear o evento de click
+        def _process():
+            try:
+                self._chat_input.delete(0, "end")
+                self._chat_input.insert(0, text)
+                self._on_send_message(None)
+            except Exception as e:
+                logger.debug("Erro ao processar frase sugerida: %s", e)
+        self.after(10, _process)
 
     def _parse_direct_delta_command(self, text: str) -> dict | None:
         """
@@ -1369,17 +1375,26 @@ class SetupTab(ctk.CTkFrame):
         parts.append("\n🔧 Veja as sugestões no painel à direita →")
         return "\n\n".join(parts)
 
-    def _auto_suggest(self, feedback: dict):
-        """Tenta gerar sugestões automáticas baseadas no feedback."""
+    def _auto_suggest(self, feedback: dict):  # noqa: ARG002
+        """
+        Tenta gerar sugestões automáticas baseadas no feedback.
+        Executa em thread separada para não travar a GUI.
+        """
         if not self.engine:
             return
 
-        try:
-            if hasattr(self.engine, "request_heuristic_suggestion"):
-                deltas, warnings = self.engine.request_heuristic_suggestion()
-                self.display_suggestions(deltas, warnings)
-        except Exception as e:
-            logger.debug("Auto-sugestão falhou: %s", e)
+        def _generate_suggestions():
+            try:
+                if hasattr(self.engine, "request_heuristic_suggestion"):
+                    deltas, warnings = self.engine.request_heuristic_suggestion()
+                    # Atualizar GUI na thread principal
+                    self.after(10, lambda: self.display_suggestions(deltas, warnings))
+            except Exception:
+                logger.debug("Auto-sugestão falhou silenciosamente")
+        
+        # Executar em thread separada para não bloquear (threading já importado no topo)
+        thread = threading.Thread(target=_generate_suggestions, daemon=True)
+        thread.start()
 
     def _rebuild_dynamic_adjustable_widgets(self, svm):
         """Cria widgets extras para todos os parâmetros ajustáveis do setup."""
