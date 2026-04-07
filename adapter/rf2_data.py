@@ -763,6 +763,14 @@ class Vehicle(DataAdapter):
         """Count lap flag: 0=do not count lap or time (invalid), 1=count lap but not time, 2=count lap and time (valid)"""
         return self.shmm.rf2ScorVeh(index).mCountLapFlag
 
+    def path_lateral(self, index: int | None = None) -> float:
+        """Lateral position w.r.t. approximate center path."""
+        return float(self.shmm.rf2ScorVeh(index).mPathLateral)
+
+    def track_edge(self, index: int | None = None) -> float:
+        """Track edge distance on same side as vehicle (w.r.t. center path)."""
+        return float(self.shmm.rf2ScorVeh(index).mTrackEdge)
+
     def penalty_duration(self, index: int | None = None) -> float:
         """Penalty duration (seconds)"""
         return self.rest.telemetry.penaltyTime

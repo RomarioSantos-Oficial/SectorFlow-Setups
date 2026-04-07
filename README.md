@@ -154,7 +154,7 @@ For full build and installer instructions, see [docs/INSTALL.md](docs/INSTALL.md
 
 4. The database and logs are automatically created in %APPDATA%/SectorFlowSetups.
 
-5. The interface is still in Portuguese; full language switching support still needs to be implemented.
+5. The interface supports 5 languages (Portuguese, English, Spanish, Japanese, Chinese) and can be changed at any time via the Settings tab.
 
 ##Main Structure
 
@@ -169,6 +169,24 @@ For full build and installer instructions, see [docs/INSTALL.md](docs/INSTALL.md
 - data/: database, configuration analyzer, and telemetry.
 
 - adapter/: shared memory connection.
+
+## Changelog
+
+### v1.2 — 2026-04-07
+- Full i18n coverage for all 5 languages (pt-br, en, es, ja, zh): chat system messages, strategy results, and all UI labels are now translated
+- Added `ThermalMapWidget` for tire temperature visualization in the Telemetry tab
+- Expanded track POIs from 9 to 20 circuits
+- Added IES (Setup Efficiency Index) badge in the Setup tab
+- Added lap estimate with confidence indicator in Telemetry
+- SECTORFLOW output filename preview before applying adjustments
+- Safety: `validate_dependencies()` standalone function added
+- Fixed `HeuristicSuggestion` field mismatch (rule_name / condition / explanation)
+
+### v1.1 — previous
+- Multi-language support (pt-br, en, es, ja, zh) via Settings tab
+- LM Studio local model integration
+- Real-time language switching without restart
+- Autonomous learning system improvements
 
 ## Quick Troubleshooting
 

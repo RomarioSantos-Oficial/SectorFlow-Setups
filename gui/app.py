@@ -314,18 +314,18 @@ class MainApp(ctk.CTk):
         """Chamado pelo tab_setup quando um setup base é carregado."""
         name = Path(filepath).name
         self._base_label.configure(
-            text=f"📄 Base: {name}",
+            text=f"📄 {_("setup_base")}: {name}",
             text_color=COLORS["accent_cyan"],
         )
-        self.set_status(f"Setup base carregado: {name}", "#00cc44")
+        self.set_status(f"{_("setup_base")}: {name}", "#00cc44")
 
     def _on_base_cleared(self):
         """Chamado pelo tab_setup quando o base é limpo."""
         self._base_label.configure(
-            text="Nenhum setup base",
+            text=_("no_setup_loaded"),
             text_color=COLORS["text_secondary"],
         )
-        self.set_status("Setup base removido.", "#aaaaaa")
+        self.set_status(_("no_setup_loaded"), "#aaaaaa")
 
     # ─────────────────────────────────────────────────────
     # Auto-suggest e alertas (callbacks do engine)
@@ -502,9 +502,9 @@ class MainApp(ctk.CTk):
 
             # Atualizar aba ativa
             current_tab = self.tabview.get()
-            if "Telemetria" in current_tab:
+            if _("tab_telemetry") in current_tab:
                 self.tab_telemetry.refresh()
-            elif "Setup" in current_tab:
+            elif _("tab_setup") in current_tab:
                 self.tab_setup.refresh()
 
         except Exception as e:
@@ -526,13 +526,13 @@ class MainApp(ctk.CTk):
                              f"{car_info.get('track_name', '')}"
                     )
                     self.status_label.configure(
-                        text="Conectado ao LMU ✓",
+                        text=f"LMU {_('connected')} ✓",
                         text_color="#00cc44",
                     )
             else:
                 self.ind_game.set_status("off")
                 self.status_label.configure(
-                    text="Aguardando conexão com LMU...",
+                    text=_("waiting_connection"),
                     text_color="#888888",
                 )
         else:

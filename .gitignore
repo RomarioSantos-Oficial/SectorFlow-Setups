@@ -33,3 +33,11 @@ RELATORIO_LMU_VIRTUAL_ENGINEER.md
 RELATORIO_MELHORIAS_APRENDIZAGEM_IA.md
 text.txt
 apredisagem.txt
+01.txt
+02.txt
+
+# Build output (arquivos gerados pelo PyInstaller - não versionar)
+dist/
+build/
+*.exe
+*.spec.bak

@@ -636,3 +636,85 @@ class WeatherIndicator(ctk.CTkFrame):
         self._details.configure(
             text=f"Pista: {track_temp:.0f}°C  |  Ar: {ambient_temp:.0f}°C"
         )
+
+
+class ThermalMapWidget(ctk.CTkFrame):
+    """
+    Mapa térmico com 20 bins, cada um representando ~5% da pista.
+    
+    Cores:
+        azul  (< 70 °C)  → frio
+        verde (< 90 °C)  → ideal
+        amarelo (< 110°C) → quente
+        vermelho (>= 110°C) → crítico
+    """
+
+    _COLOR_MAP = [
+        (70.0,  "#4cc9f0", "#000000"),   # cold
+        (90.0,  "#06d6a0", "#000000"),   # ideal
+        (110.0, "#ffd166", "#000000"),   # warm
+    ]
+
+    def __init__(self, master, title: str = "🌡 Mapa Térmico (20 zonas)", **kwargs):
+        super().__init__(master, fg_color="transparent", **kwargs)
+
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x")
+
+        ctk.CTkLabel(
+            header, text=title, font=("Arial", 11, "bold"),
+            text_color=COLORS["text_primary"],
+        ).pack(side="left")
+
+        bins_frame = ctk.CTkFrame(
+            self, fg_color=COLORS["bg_card"], corner_radius=6
+        )
+        bins_frame.pack(fill="x", pady=(4, 2))
+
+        self._bins: list[ctk.CTkLabel] = []
+        for i in range(20):
+            lbl = ctk.CTkLabel(
+                bins_frame,
+                text="--",
+                font=("JetBrains Mono", 7),
+                width=30, height=24,
+                corner_radius=3,
+                fg_color=COLORS["separator"],
+                text_color=COLORS["text_secondary"],
+            )
+            lbl.grid(row=0, column=i, padx=1, pady=4)
+            self._bins.append(lbl)
+
+        # Marcadores de posição (0%, 25%, 50%, 75%, 100%)
+        legend = ctk.CTkFrame(self, fg_color="transparent")
+        legend.pack(fill="x")
+        for pct in ["0%", "25%", "50%", "75%", "100%"]:
+            ctk.CTkLabel(
+                legend, text=pct,
+                font=("JetBrains Mono", 7),
+                text_color=COLORS["text_secondary"],
+            ).pack(side="left", expand=True)
+
+    def _color_for_temp(self, temp: float) -> tuple[str, str]:
+        """Retorna (fg_color, text_color) baseado na temperatura em °C."""
+        if temp <= 0:
+            return COLORS["separator"], COLORS["text_secondary"]
+        for threshold, fg, tc in self._COLOR_MAP:
+            if temp < threshold:
+                return fg, tc
+        return "#ef476f", "#ffffff"   # hot ≥ 110 °C
+
+    def update_profile(self, profile: list[float]) -> None:
+        """
+        Atualiza os 20 bins com temperaturas em °C.
+
+        profile: lista com até 20 floats. Bins excedentes ficam cinzas.
+        """
+        for i, lbl in enumerate(self._bins):
+            temp = float(profile[i]) if i < len(profile) else 0.0
+            fg, tc = self._color_for_temp(temp)
+            lbl.configure(
+                fg_color=fg,
+                text_color=tc,
+                text=f"{temp:.0f}" if temp > 0 else "--",
+            )

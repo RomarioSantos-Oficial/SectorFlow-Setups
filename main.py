@@ -191,6 +191,12 @@ class VirtualEngineer:
         self._session_history: list[dict] = []
         self._memory_loaded_for: tuple[int, int] | None = None  # (car_id, track_id)
 
+        # Pit exit detection: rastreia último número de volta confirmado
+        self._last_confirmed_lap: int = -1
+
+        # Heuristic log: log_ids pendentes aguardando avaliação de reward
+        self._pending_heuristic_log_ids: list[int] = []
+
         # Shared Memory — referência mantida para shutdown
         self._rf2info = None
 
@@ -464,6 +470,24 @@ class VirtualEngineer:
         )
         deltas = merge_suggestions(heuristic_list)
 
+        # ── Log de heurísticas disparadas (Item E) ──
+        try:
+            if (hasattr(self, '_current_session_id')
+                    and self._current_session_id and heuristic_list):
+                self._pending_heuristic_log_ids.clear()
+                for hs in heuristic_list:
+                    log_id = self.db.log_heuristic_rule(
+                        session_id=self._current_session_id,
+                        after_lap=summary.lap_number,
+                        rule_name=hs.rule_name,
+                        condition=hs.condition,
+                        suggestion_text=hs.explanation,
+                        delta_applied=f"{hs.param_name}:{hs.delta:+d}",
+                    )
+                    self._pending_heuristic_log_ids.append(log_id)
+        except Exception as _exc:
+            logger.debug("Erro ao registrar heurística no banco: %s", _exc)
+
         current_setup = self._current_svm.get_all_indices() if self._current_svm else None
         deltas, warnings = validate_deltas(
             deltas, max_delta=3, current_setup=current_setup
@@ -604,6 +628,201 @@ class VirtualEngineer:
         self._base_svm = None
         logger.info("Setup base limpo.")
 
+    # ─────────────────────────────────────────────────────
+    # Auto-detecção de carro + geração automática de setup
+    # ─────────────────────────────────────────────────────
+
+    def auto_detect_and_generate_setup(self, climate: str = "seco") -> tuple["Path", str, bool]:
+        """
+        Detecta automaticamente o carro na pista via Shared Memory,
+        encontra o melhor .svm salvo no jogo para essa pista,
+        e gera um novo arquivo com os parâmetros históricos otimizados.
+
+        Returns:
+            (caminho_do_novo_arquivo, descricao_da_fonte, novo_combo)
+
+            ``novo_combo`` é True quando este é o primeiro setup para este
+            carro×pista — a GUI deve exibir uma mensagem pedindo ao piloto
+            que faça uma volta de instalação para calibrar a base.
+        Raises:
+            ValueError: se não houver carro detectado ou .svm encontrado.
+        """
+        # 1. Atualizar carro/pista via shared memory
+        car_info = self.get_car_info()
+        if car_info:
+            self._car_name = car_info.get("vehicle_name", "") or self._car_name
+            self._car_class = car_info.get("vehicle_class", "") or self._car_class
+            self._track_name = car_info.get("track_name", "") or self._track_name
+
+        if not self._car_name and not self._track_name:
+            raise ValueError(
+                "Nenhum carro/pista detectado. "
+                "Verifique se o jogo está aberto e um carro está na pista."
+            )
+
+        # 2. Encontrar um .svm template no jogo para esta pista
+        template_path = self._find_template_svm_for_track()
+        if not template_path:
+            raise ValueError(
+                f"Nenhum arquivo .svm encontrado"
+                + (f" para a pista '{self._track_name}'" if self._track_name else "")
+                + ".\nVá à pista no jogo, entre no garage e salve um setup primeiro."
+            )
+
+        # 3. Carregar como setup base (somente leitura)
+        self.load_base_setup(str(template_path))
+
+        # 4. Buscar setup histórico do banco de dados
+        source = "heurísticas"
+        best_indices: dict | None = None
+        novo_combo = False
+        try:
+            car_id = self.db.get_or_create_car(self._car_name, self._car_class)
+            track_id = self.db.get_or_create_track(self._track_name)
+            rain_level = self._detect_rain_level()
+
+            # Verificar histórico e temperatura atual
+            history = self.db.check_car_track_history(car_id, track_id)
+            novo_combo = not history["has_data"]
+
+            # Obter temperatura de pista atual para filtrar setup por condição
+            track_temp_c: float | None = None
+            weather_data = self.get_weather_data()
+            if weather_data:
+                track_temp_c = weather_data.get("track_temp") or None
+
+            if history["has_data"]:
+                best_indices = self.db.get_recommended_setup_base(
+                    car_id, track_id, rain_level,
+                    track_temp_c=track_temp_c,
+                )
+                if best_indices:
+                    sessions = history["session_count"]
+                    count = len(best_indices)
+                    temp_info = (
+                        f", pista {track_temp_c:.0f}°C" if track_temp_c else ""
+                    )
+                    source = (
+                        f"histórico do banco ({count} parâmetros, "
+                        f"{sessions} sessões{temp_info})"
+                    )
+                    logger.info(
+                        "Setup histórico encontrado: %d índices para %s@%s%s",
+                        count, self._car_name, self._track_name, temp_info,
+                    )
+            else:
+                logger.info(
+                    "Novo combo carro×pista: %s@%s — gerando setup via heurísticas",
+                    self._car_name, self._track_name,
+                )
+        except Exception as e:
+            logger.warning("Nenhum histórico disponível, usando heurísticas: %s", e)
+
+        # 5. Criar novo .svm
+        if best_indices:
+            new_path = self._create_setup_from_historical_indices(best_indices, climate)
+        else:
+            new_path = self.create_setup_from_base(mode="heuristic", climate=climate)
+
+        if novo_combo:
+            source = "heurísticas (primeira vez neste combo carro×pista)"
+
+        logger.info("Setup auto-gerado: %s (fonte: %s)", new_path.name, source)
+        return new_path, source, novo_combo
+
+    def _find_template_svm_for_track(self) -> "Path | None":
+        """
+        Busca um .svm existente no jogo para usar como template.
+        Prefere arquivos originais (não gerados pelo SetorFlow),
+        e tenta corresponder à pista atual quando possível.
+        """
+        if not self.lmu_path:
+            return None
+
+        settings_dir = self.lmu_path / "UserData" / "player" / "Settings"
+        if not settings_dir.exists():
+            return None
+
+        # Normalizar nome da pista para comparação
+        track_norm = (
+            self._track_name.lower().replace(" ", "").replace("-", "")
+            if self._track_name else ""
+        )
+
+        candidates: list["Path"] = []
+
+        for folder in sorted(settings_dir.iterdir()):
+            if not folder.is_dir():
+                continue
+            folder_norm = folder.name.lower().replace(" ", "").replace("-", "")
+
+            # Verificar se a pasta corresponde à pista atual
+            if track_norm and (track_norm in folder_norm or folder_norm in track_norm):
+                for f in sorted(folder.glob("*.svm")):
+                    if not f.name.startswith("SetorFlow_"):
+                        candidates.insert(0, f)  # Prioridade máxima
+                    else:
+                        candidates.append(f)
+
+        # Fallback: qualquer .svm não-SetorFlow disponível
+        if not candidates:
+            all_svm = sorted(
+                settings_dir.rglob("*.svm"),
+                key=lambda f: f.stat().st_mtime,
+                reverse=True,
+            )
+            candidates = [f for f in all_svm if not f.name.startswith("SetorFlow_")]
+            if not candidates:
+                candidates = all_svm
+
+        return candidates[0] if candidates else None
+
+    def _create_setup_from_historical_indices(
+        self, best_indices: dict, climate: str = "seco"
+    ) -> "Path":
+        """
+        Cria um novo .svm substituindo os índices atuais pelos históricos
+        (calcula delta = target - atual para cada parâmetro).
+        """
+        from data.svm_parser import parse_svm, apply_deltas
+
+        new_svm = parse_svm(self._base_svm.filepath)
+
+        # Calcular deltas: histórico_melhor - valor_atual_no_template
+        deltas: dict[str, int] = {}
+        for full_key, target_idx in best_indices.items():
+            param = new_svm.params.get(full_key)
+            if param and param.adjustable:
+                delta = int(target_idx) - param.index
+                if delta != 0:
+                    deltas[full_key] = delta
+
+        # Somar deltas climáticos por cima dos históricos
+        for key, val in self._get_climate_deltas(climate).items():
+            deltas[key] = deltas.get(key, 0) + val
+
+        if deltas:
+            apply_deltas(new_svm, deltas)
+
+        new_path = self._generate_setorflow_path(climate)
+        save_svm(new_svm, output_path=new_path, backup=False)
+        logger.info("Setup histórico aplicado: %s (%d alterações)", new_path.name, len(deltas))
+        return new_path
+
+    def _detect_rain_level(self) -> str:
+        """Detecta nível de chuva atual via shared memory."""
+        try:
+            weather = self.get_weather_data()
+            if weather:
+                rain = weather.get("rain", 0.0)
+                if rain > 0.5:
+                    return "wet"
+                if rain > 0.1:
+                    return "mixed"
+        except Exception:
+            pass
+        return "dry"
+
     def create_setup_from_base(self, mode: str = "ia",
                                 climate: str = "seco") -> Path:
         """
@@ -639,8 +858,22 @@ class VirtualEngineer:
         if deltas:
             apply_deltas(new_svm, deltas)
 
-        # Gerar nome SetorFlow
-        new_path = self._generate_setorflow_path(climate)
+        # Gerar nome SECTORFLOW
+        new_path = self._generate_sectorflow_path(climate=climate)
+
+        # Escrever campo Notes= com metadados automáticos
+        from data.svm_parser import write_notes_field
+        from datetime import datetime as _dt2
+        _clima_label = {"seco": "Seco", "chuva_leve": "Chuva Leve",
+                        "chuva_forte": "Chuva Forte", "misto": "Misto",
+                        "mescla": "Mescla 50/50"}.get(climate, climate)
+        _auto_note = (
+            f"SectorFlow {mode.upper()} setup. Clima: {_clima_label}. "
+            f"Carro: {self._car_name or 'desconhecido'}. "
+            f"Pista: {self._track_name or 'desconhecida'}. "
+            f"Gerado: {_dt2.now().strftime('%d/%m/%Y %H:%M')}."
+        )
+        write_notes_field(new_svm, _auto_note)
 
         # Salvar — nunca sobrescreve, cria novo
         save_svm(new_svm, output_path=new_path, backup=False)
@@ -700,51 +933,215 @@ class VirtualEngineer:
 
     def _generate_setorflow_path(self, climate: str) -> Path:
         """
-        Gera o caminho do novo setup no padrão SetorFlow.
-        Formato: SetorFlow_{clima}_{categoria}_{carro}_{DD-MM-AAAA}.svm
-        O arquivo é salvo na mesma pasta do base.
-        Se já existir, adiciona _2, _3...
+        Gera o caminho do novo setup. Delega para _generate_sectorflow_path().
+        Mantido por compatibilidade com chamadas existentes.
+        """
+        return self._generate_sectorflow_path(climate=climate, mode="Q")
+
+    def _generate_sectorflow_path(self, climate: str, mode: str = "Q",
+                                   version: int | None = None) -> Path:
+        """
+        Gera o caminho do novo setup no padrão SECTORFLOW.
+
+        Formato: SECTORFLOW_{CLIMA}_{CAT+MARCA}_{PISTA}_{DDMM}_V{N}_{MODO}.svm
+
+        Exemplos:
+          SECTORFLOW_DRY_LMP3GIN_FUJ_0704_V1_Q.svm
+          SECTORFLOW_WET_GT3PORC_INT_0704_V1_RS.svm
+
+        Args:
+            climate: "seco", "chuva_leve", "chuva_forte", "misto", "mescla"
+            mode: "Q" (Quali), "R" (Race), "QA" (Quali Agressivo), "RS" (Race Seguro)
+            version: Forçar número de versão (None = auto-incremento)
         """
         from datetime import datetime as dt
         import re as _re
 
-        # Dados do carro (da telemetria ou do base)
-        car_name = self._car_name or "Desconhecido"
-        car_class = self._car_class or "Geral"
-
-        # Sanitizar nomes para uso em arquivos
-        def sanitize(text: str) -> str:
-            text = text.strip().replace(" ", "_")
-            return _re.sub(r'[<>:"/\\|?*]', '', text)
-
-        clima_map = {
-            "seco": "seco",
-            "chuva_leve": "chuva_leve",
-            "chuva_forte": "chuva_forte",
-            "misto": "misto",
-            "mescla": "mescla_50-50",
+        # Dicionários de abreviação
+        _BRAND_MAP = {
+            "porsche": "POR", "mclaren": "MCL", "ferrari": "FER",
+            "ginetta": "GIN", "oreca": "ORC", "ligier": "LIG",
+            "toyota": "TOY", "peugeot": "PEU", "alpine": "ALP",
+            "bmw": "BMW", "audi": "AUD", "mercedes": "MER",
+            "corvette": "COR", "aston": "AST", "lamborghini": "LAM",
         }
-        clima_str = clima_map.get(climate, climate)
-        date_str = dt.now().strftime("%d-%m-%Y")
+        _TRACK_MAP = {
+            "interlagos": "INT", "monza": "MON", "bahrain": "BAH",
+            "le mans": "LEM", "lemans": "LEM", "spa": "SPA",
+            "fuji": "FUJ", "portimao": "POR", "imola": "IML",
+            "hungaroring": "HUN", "sebring": "SEB", "daytona": "DAY",
+            "laguna seca": "LAG", "watkins glen": "WAT",
+        }
+        _CLIMA_MAP = {
+            "seco": "DRY", "chuva_leve": "WET",
+            "chuva_forte": "WET", "misto": "WET", "mescla": "WET",
+        }
+        _CLASS_PREFIX_MAP = {
+            "hypercar": "HY", "lmh": "HY", "lmdh": "HY",
+            "lmp2": "LMP2", "lmp3": "LMP3",
+            "gt3": "GT3", "lmgt3": "GT3", "gte": "GTE",
+        }
 
-        base_name = (
-            f"SetorFlow_{sanitize(clima_str)}"
-            f"_{sanitize(car_class)}"
-            f"_{sanitize(car_name)}"
-            f"_{date_str}"
-        )
+        def _sanitize(text: str) -> str:
+            return _re.sub(r'[<>:"/\\|?*\s]', '', text).upper()
+
+        def _find_brand(name: str) -> str:
+            name_lower = name.lower()
+            for brand, abbr in _BRAND_MAP.items():
+                if brand in name_lower:
+                    return abbr
+            return _sanitize(name[:3]) if name else "UNK"
+
+        def _find_track_abbr(track: str) -> str:
+            track_lower = track.lower()
+            for tkey, abbr in _TRACK_MAP.items():
+                if tkey in track_lower:
+                    return abbr
+            return _sanitize(track[:3]) if track else "UNK"
+
+        car_name = self._car_name or "Unknown"
+        car_class = (self._car_class or "").lower()
+        track_name = self._track_name or "unknown"
+
+        clima_str = _CLIMA_MAP.get(climate, "DRY")
+        class_prefix = _CLASS_PREFIX_MAP.get(car_class, _sanitize(car_class[:3]))
+        brand_str = _find_brand(car_name)
+        cat_mar = (class_prefix + brand_str)[:8]   # max 8 chars
+        track_str = _find_track_abbr(track_name)
+        date_str = dt.now().strftime("%d%m")        # DDMM — curto
+        mode_str = _sanitize(mode) or "Q"
 
         # Salvar na mesma pasta do arquivo base
         output_dir = self._base_svm.filepath.parent
 
-        # Anti-colisão: se já existe, adiciona sufixo
-        candidate = output_dir / f"{base_name}.svm"
-        counter = 2
-        while candidate.exists():
-            candidate = output_dir / f"{base_name}_{counter}.svm"
-            counter += 1
+        # Auto-versionamento
+        v = version if version is not None else 1
+        while True:
+            name = (
+                f"SECTORFLOW_{clima_str}_{cat_mar}_{track_str}"
+                f"_{date_str}_V{v}_{mode_str}.svm"
+            )
+            candidate = output_dir / name
+            if not candidate.exists() or version is not None:
+                break
+            v += 1
 
         return candidate
+
+    # ─────────────────────────────────────────────────────
+    # Conversor automático Quali → Race
+    # ─────────────────────────────────────────────────────
+
+    def generate_race_from_quali(
+        self,
+        quali_svm_path: "Path | str | None" = None,
+        target_fuel_liters: float = 0.0,
+        extra_notes: str = "",
+    ) -> "Path":
+        """
+        Gera automaticamente um setup de corrida a partir de um setup de quali.
+
+        Aplica offsets conservadores para compensar o peso extra do combustível,
+        preservar os pneus em long runs e prevenir fade dos freios.
+
+        Offsets aplicados:
+          - RideHeight +2 clicks (frente e traseira) — compensar peso do tanque
+          - CamberSetting -1 índice (frente) — longevidade de pneu
+          - SpringSetting -1 índice frente e traseira — absorver peso + desgaste
+          - BrakeDuctSetting +2 cliques frente — evitar fade em long run
+
+        Args:
+            quali_svm_path: Caminho do setup de quali. Se None, usa o base atual.
+            target_fuel_liters: Combustível desejado em litros (0 = manter atual).
+            extra_notes: Texto adicional para o campo Notes=.
+
+        Returns:
+            Path do novo setup de corrida criado.
+        """
+        from data.svm_parser import (
+            parse_svm, apply_deltas, save_svm,
+            calculate_fuel_compensation, write_notes_field,
+        )
+        from datetime import datetime as _dt
+
+        source_path = Path(quali_svm_path) if quali_svm_path else (
+            self._base_svm.filepath if self._base_svm else None
+        )
+        if source_path is None or not source_path.exists():
+            raise ValueError("Nenhum setup de quali disponível para gerar Race.")
+
+        race_svm = parse_svm(source_path)
+
+        # Offsets Race vs Quali
+        race_deltas: dict[str, int] = {
+            # Altura — compensar peso do combustível
+            "FRONTLEFT.RideHeightSetting":   +2,
+            "FRONTRIGHT.RideHeightSetting":  +2,
+            "REARLEFT.RideHeightSetting":    +2,
+            "REARRIGHT.RideHeightSetting":   +2,
+            # Camber — mais conservador para longevidade
+            "FRONTLEFT.CamberSetting":       -1,
+            "FRONTRIGHT.CamberSetting":      -1,
+            # Molas — suavizar para peso extra + desgaste
+            "FRONTLEFT.SpringSetting":       -1,
+            "FRONTRIGHT.SpringSetting":      -1,
+            "REARLEFT.SpringSetting":        -1,
+            "REARRIGHT.SpringSetting":       -1,
+            # Dutos de freio — mais aberto para prevenir fade
+            "FRONTLEFT.BrakeDuctSetting":    +2,
+            "FRONTRIGHT.BrakeDuctSetting":   +2,
+        }
+
+        # Compensação adicional de ride height por combustível
+        if target_fuel_liters > 0:
+            current_fuel_ratio = race_svm.get_fuel_ratio()
+            fuel_param = None
+            for param in race_svm.params.values():
+                if "FUEL" in param.name.upper():
+                    fuel_param = param
+                    break
+            current_liters = (fuel_param.index * current_fuel_ratio) if fuel_param else 0.0
+            fuel_delta = target_fuel_liters - current_liters
+            car_class = self._car_class or ""
+            rh_comp = calculate_fuel_compensation(fuel_delta, car_class)
+            for key, delta in rh_comp.items():
+                # Mapear nomes sem seção para o formato full_key
+                # ride_height_fl → FRONTLEFT.RideHeightSetting, etc.
+                _rh_map = {
+                    "ride_height_fl": "FRONTLEFT.RideHeightSetting",
+                    "ride_height_fr": "FRONTRIGHT.RideHeightSetting",
+                    "ride_height_rl": "REARLEFT.RideHeightSetting",
+                    "ride_height_rr": "REARRIGHT.RideHeightSetting",
+                }
+                full_key = _rh_map.get(key)
+                if full_key:
+                    race_deltas[full_key] = race_deltas.get(full_key, 0) + delta
+
+        apply_deltas(race_svm, race_deltas)
+
+        # Definir combustível se solicitado
+        if target_fuel_liters > 0:
+            race_svm.set_fuel_liters(target_fuel_liters)
+
+        # Escrever campo Notes=
+        date_str = _dt.now().strftime("%d/%m/%Y %H:%M")
+        notes = (
+            f"SectorFlow Race Setup — gerado de {source_path.stem} em {date_str}. "
+            f"Offsets: RH+2, Camber-1, Spring-1, BrakeDuct+2."
+        )
+        if extra_notes:
+            notes += f" {extra_notes}"
+        write_notes_field(race_svm, notes)
+
+        # Gerar nome no padrão SECTORFLOW_..._R.svm
+        race_path = self._generate_sectorflow_path(climate="seco", mode="R")
+        save_svm(race_svm, output_path=race_path, backup=False)
+
+        logger.info(
+            "Setup Race gerado a partir de %s → %s",
+            source_path.name, race_path.name,
+        )
+        return race_path
 
     # ─────────────────────────────────────────────────────
     # Calculadora de Estratégia Quali / Corrida
@@ -866,6 +1263,9 @@ class VirtualEngineer:
         # Consumo por volta: dados live
         fuel_consumptions = []
         for i in range(1, len(history)):
+            # B3: ignorar voltas inválidas no cálculo de consumo
+            if not history[i - 1].get("valid", True) or not history[i].get("valid", True):
+                continue
             prev_feat = history[i - 1].get("features", {})
             curr_feat = history[i].get("features", {})
             prev_fuel = prev_feat.get("fuel", 0) or prev_feat.get("fuel_start", 0)
@@ -876,7 +1276,10 @@ class VirtualEngineer:
                     fuel_consumptions.append(consumption)
 
         if fuel_consumptions:
-            fuel_per_lap = sum(fuel_consumptions) / len(fuel_consumptions)
+            # G3.4: usar as últimas 3 medições para ser mais responsivo a
+            # mudanças recentes de ritmo (ex: novo setup, condições de pista)
+            recent = fuel_consumptions[-3:] if len(fuel_consumptions) >= 3 else fuel_consumptions
+            fuel_per_lap = sum(recent) / len(recent)
         elif self._car_name and self._track_name:
             # Fallback: banco de dados
             try:
@@ -1056,12 +1459,15 @@ class VirtualEngineer:
         except Exception:
             pass
 
-        # Consumo médio por volta a partir do histórico
+        # Consumo médio por volta a partir do histórico (B3: apenas voltas válidas)
         fuel_consumptions = []
         if len(self._lap_history) >= 2:
             for i in range(1, len(self._lap_history)):
                 prev = self._lap_history[i - 1]
                 curr = self._lap_history[i]
+                # B3: ignorar voltas inválidas (ex: bandeira amarela, pit lap)
+                if not prev.get("valid", True) or not curr.get("valid", True):
+                    continue
                 prev_fuel = prev.get("features", {}).get("fuel", 0)
                 curr_fuel = curr.get("features", {}).get("fuel", 0)
                 if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel:
@@ -1134,12 +1540,81 @@ class VirtualEngineer:
         return result
 
     # ─────────────────────────────────────────────────────
+    # Estimativa de Voltas Restantes (D1)
+    # ─────────────────────────────────────────────────────
+
+    def estimate_laps_remaining(self) -> dict:
+        """Calcula voltas restantes com o combustível atual (D1).
+
+        Usa apenas voltas válidas do histórico (B3) para calcular
+        o consumo médio das últimas 3 voltas.
+
+        Returns:
+            Dict com: laps (float|None), current_fuel_l (float),
+            avg_consumption_l (float), confidence ("high"|"low").
+        """
+        result: dict = {
+            "laps": None,
+            "current_fuel_l": 0.0,
+            "avg_consumption_l": 0.0,
+            "confidence": "low",
+        }
+
+        # Combustível atual ao vivo
+        try:
+            live = self.telemetry.get_live_telemetry()
+            if live:
+                result["current_fuel_l"] = float(live.get("fuel", 0.0) or 0.0)
+        except Exception:
+            return result
+
+        # Consumo por volta — apenas voltas VÁLIDAS (B3)
+        valid_history = [h for h in self._lap_history if h.get("valid", True)]
+        fuel_deltas: list[float] = []
+        for i in range(1, len(valid_history)):
+            prev_fuel = valid_history[i - 1].get("features", {}).get("fuel", 0)
+            curr_fuel = valid_history[i].get("features", {}).get("fuel", 0)
+            if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel:
+                delta = prev_fuel - curr_fuel
+                if 0.1 < delta < 20:
+                    fuel_deltas.append(delta)
+
+        recent = fuel_deltas[-3:] if len(fuel_deltas) >= 3 else fuel_deltas
+        if not recent:
+            return result
+
+        avg = sum(recent) / len(recent)
+        result["avg_consumption_l"] = round(avg, 3)
+        result["confidence"] = "high" if len(recent) >= 3 else "low"
+
+        if avg > 0 and result["current_fuel_l"] > 0:
+            result["laps"] = round(result["current_fuel_l"] / avg, 1)
+
+        return result
+
+    # ─────────────────────────────────────────────────────
     # Callback de volta completada
     # ─────────────────────────────────────────────────────
 
     def _on_lap_completed(self, summary):
         """Chamado quando uma volta é concluída (pelo TelemetryReader)."""
         try:
+            # ── Detecção de Pit Exit (Item D) ──
+            # Se há uma lacuna no número de volta (ex: voltou do n-1 para n+1),
+            # o carro passou pelos boxes sem disparar callback → pit exit.
+            if self._last_confirmed_lap >= 0:
+                lap_gap = summary.lap_number - self._last_confirmed_lap
+                if lap_gap > 1:
+                    # Pelo menos uma volta de pit foi omitida → acabou de sair
+                    try:
+                        self._save_setup_snapshot_auto()
+                        logger.info(
+                            "Pit exit detectado após volta %d → snapshot de setup salvo.",
+                            self._last_confirmed_lap,
+                        )
+                    except Exception as _exc:
+                        logger.debug("Erro ao salvar snapshot no pit exit: %s", _exc)
+            self._last_confirmed_lap = summary.lap_number
             # Registrar carro e pista no banco
             car_id = self.db.get_or_create_car(
                 summary.vehicle_name,
@@ -1317,6 +1792,24 @@ class VirtualEngineer:
                     )
                     # Invalidar cache de total_samples
                     self._cached_total_samples = None
+
+                    # ── Validação de Heurísticas (Item E) ──
+                    # Atualizar was_effective para regras disparadas na última sugestão
+                    if self._pending_heuristic_log_ids:
+                        try:
+                            effective = 1 if reward > 0.1 else (
+                                0 if reward < -0.1 else None
+                            )
+                            if effective is not None:
+                                for _lid in self._pending_heuristic_log_ids:
+                                    self.db.update_heuristic_effectiveness(
+                                        _lid, effective
+                                    )
+                            self._pending_heuristic_log_ids.clear()
+                        except Exception as _exc:
+                            logger.debug(
+                                "Erro ao atualizar efetividade heurística: %s", _exc
+                            )
 
                     # ── Treinamento ADAPTATIVO ──
                     # Confiança baixa → treina a cada 3 voltas (aprende rápido)

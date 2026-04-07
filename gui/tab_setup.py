@@ -266,7 +266,20 @@ class SetupTab(ctk.CTkFrame):
         )
         self._btn_clear.pack(side="right")
 
-        # ─── Ações Rápidas ────────────────────
+        # Botão de auto-detecção (linha separada)
+        auto_row = ctk.CTkFrame(base_card, fg_color="transparent")
+        auto_row.pack(fill="x", padx=14, pady=(0, 10))
+
+        ctk.CTkButton(
+            auto_row,
+            text="🎮 Detectar Carro + Gerar Setup",
+            height=32,
+            fg_color="#1a6b3c", hover_color="#145730",
+            font=("Arial", 11, "bold"),
+            command=self._on_auto_detect_generate,
+        ).pack(fill="x")
+
+
         actions_card = Card(right, title=f"⚡ {_('quick_actions')}")
         actions_card.pack(fill="x", pady=(0, 6))
 
@@ -310,92 +323,92 @@ class SetupTab(ctk.CTkFrame):
 
         # Todos os parâmetros organizados por categoria e nível IA
         _PARAM_SECTIONS = [
-            ("🛩️ Aerodinâmica", [
-                ("delta_rw", "Asa Traseira (RW)"),
+            (f"🛩️ {_('aero')}", [
+                ("delta_rw", _("rear_wing")),
             ], "basic"),
-            ("🔧 Molas", [
-                ("delta_spring_f", "Mola Dianteira"),
-                ("delta_spring_r", "Mola Traseira"),
+            (f"🔧 {_('springs')}", [
+                ("delta_spring_f", _("front_spring")),
+                ("delta_spring_r", _("rear_spring")),
             ], "basic"),
-            ("📐 Camber", [
-                ("delta_camber_f", "Camber Diant."),
-                ("delta_camber_r", "Camber Tras."),
+            (f"📐 {_('camber')}", [
+                ("delta_camber_f", _("front_camber")),
+                ("delta_camber_r", _("rear_camber")),
             ], "basic"),
-            ("🎈 Pressão dos Pneus", [
-                ("delta_pressure_f", "Pressão Pneu D."),
-                ("delta_pressure_r", "Pressão Pneu T."),
+            (f"🎈 {_('tire_pressure')}", [
+                ("delta_pressure_f", _("front_pressure")),
+                ("delta_pressure_r", _("rear_pressure")),
             ], "basic"),
-            ("🛑 Freios", [
-                ("delta_brake_press", "Pressão Freio"),
-                ("delta_rear_brake_bias", "Brake Bias (Balanço)"),
+            (f"🛑 {_('brakes_section')}", [
+                ("delta_brake_press", _("brake_pressure")),
+                ("delta_rear_brake_bias", _("brake_balance_label")),
             ], "basic"),
-            ("🎮 Eletrônicos (TC / ABS)", [
-                ("delta_tc_onboard", "TC Onboard (Liga/Desliga)"),
-                ("delta_tc_map", "TC Map"),
+            (f"🎮 {_('electronics')}", [
+                ("delta_tc_onboard", _("tc_onboard")),
+                ("delta_tc_map", _("tc_map")),
                 ("delta_tc_power_cut", "TC Power Cut"),
                 ("delta_tc_slip_angle", "TC Slip Angle"),
                 ("delta_abs_map", "ABS Map"),
             ], "basic"),
-            ("🔄 Barra Anti-Rolagem", [
-                ("delta_arb_f", "ARB Diant."),
-                ("delta_arb_r", "ARB Tras."),
+            (f"🔄 {_('arb')}", [
+                ("delta_arb_f", _("arb_front")),
+                ("delta_arb_r", _("arb_rear")),
             ], "intermediate"),
-            ("🦶 Toe", [
-                ("delta_toe_f", "Toe Diant."),
-                ("delta_toe_r", "Toe Tras."),
+            (f"🦶 {_('toe_section')}", [
+                ("delta_toe_f", _("toe_front")),
+                ("delta_toe_r", _("toe_rear")),
             ], "intermediate"),
-            ("📏 Ride Height", [
-                ("delta_ride_height_f", "Ride Height D."),
-                ("delta_ride_height_r", "Ride Height T."),
+            (f"📏 {_('ride_height_section')}", [
+                ("delta_ride_height_f", _("ride_height_front")),
+                ("delta_ride_height_r", _("ride_height_rear")),
             ], "intermediate"),
-            ("🔨 Amortecedores (Lento)", [
-                ("delta_slow_bump_f", "Bump Lento D."),
-                ("delta_slow_bump_r", "Bump Lento T."),
-                ("delta_slow_rebound_f", "Rebound Lento D."),
-                ("delta_slow_rebound_r", "Rebound Lento T."),
+            (f"🔨 {_('dampers_slow')}", [
+                ("delta_slow_bump_f", _("slow_bump_f")),
+                ("delta_slow_bump_r", _("slow_bump_r")),
+                ("delta_slow_rebound_f", _("slow_rebound_f")),
+                ("delta_slow_rebound_r", _("slow_rebound_r")),
             ], "intermediate"),
-            ("⚙️ Diferencial", [
-                ("delta_diff_preload", "Pré-carga Diferencial"),
+            (f"⚙️ {_('differential')}", [
+                ("delta_diff_preload", _("diff_preload")),
             ], "intermediate"),
-            ("🔧 Molas (Per-Roda)", [
-                ("delta_spring_fl", "Mola FL"),
-                ("delta_spring_fr", "Mola FR"),
-                ("delta_spring_rl", "Mola RL"),
-                ("delta_spring_rr", "Mola RR"),
+            (f"🔧 {_('springs_per_wheel')}", [
+                ("delta_spring_fl", f"{_('front_spring')} FL"),
+                ("delta_spring_fr", f"{_('front_spring')} FR"),
+                ("delta_spring_rl", f"{_('rear_spring')} RL"),
+                ("delta_spring_rr", f"{_('rear_spring')} RR"),
             ], "advanced"),
-            ("📐 Camber (Per-Roda)", [
-                ("delta_camber_fl", "Camber FL"),
-                ("delta_camber_fr", "Camber FR"),
-                ("delta_camber_rl", "Camber RL"),
-                ("delta_camber_rr", "Camber RR"),
+            (f"📐 {_('camber_per_wheel')}", [
+                ("delta_camber_fl", f"{_('camber')} FL"),
+                ("delta_camber_fr", f"{_('camber')} FR"),
+                ("delta_camber_rl", f"{_('camber')} RL"),
+                ("delta_camber_rr", f"{_('camber')} RR"),
             ], "advanced"),
-            ("🎈 Pressão (Per-Roda)", [
-                ("delta_pressure_fl", "Pressão FL"),
-                ("delta_pressure_fr", "Pressão FR"),
-                ("delta_pressure_rl", "Pressão RL"),
-                ("delta_pressure_rr", "Pressão RR"),
+            (f"🎈 {_('pressure_per_wheel')}", [
+                ("delta_pressure_fl", f"{_('tire_pressure')} FL"),
+                ("delta_pressure_fr", f"{_('tire_pressure')} FR"),
+                ("delta_pressure_rl", f"{_('tire_pressure')} RL"),
+                ("delta_pressure_rr", f"{_('tire_pressure')} RR"),
             ], "advanced"),
-            ("📏 Ride Height (Per-Roda)", [
-                ("delta_ride_height_fl", "Ride Height FL"),
-                ("delta_ride_height_fr", "Ride Height FR"),
-                ("delta_ride_height_rl", "Ride Height RL"),
-                ("delta_ride_height_rr", "Ride Height RR"),
+            (f"📏 {_('ride_height_pw')}", [
+                ("delta_ride_height_fl", f"{_('ride_height_section')} FL"),
+                ("delta_ride_height_fr", f"{_('ride_height_section')} FR"),
+                ("delta_ride_height_rl", f"{_('ride_height_section')} RL"),
+                ("delta_ride_height_rr", f"{_('ride_height_section')} RR"),
             ], "advanced"),
-            ("🔨 Amortecedores (Rápido)", [
-                ("delta_fast_bump_f", "Bump Rápido D."),
-                ("delta_fast_bump_r", "Bump Rápido T."),
-                ("delta_fast_rebound_f", "Rebound Rápido D."),
-                ("delta_fast_rebound_r", "Rebound Rápido T."),
+            (f"🔨 {_('dampers_fast')}", [
+                ("delta_fast_bump_f", _("fast_bump_f")),
+                ("delta_fast_bump_r", _("fast_bump_r")),
+                ("delta_fast_rebound_f", _("fast_rebound_f")),
+                ("delta_fast_rebound_r", _("fast_rebound_r")),
             ], "advanced"),
-            ("🌀 Dutos de Freio", [
-                ("delta_brake_duct_f", "Duto Freio D."),
-                ("delta_brake_duct_r", "Duto Freio T."),
+            (f"🌀 {_('brake_ducts')}", [
+                ("delta_brake_duct_f", _("brake_duct_f")),
+                ("delta_brake_duct_r", _("brake_duct_r")),
             ], "advanced"),
-            ("🔥 Motor / Energia", [
-                ("delta_radiator", "Radiador"),
-                ("delta_engine_mix", "Mix Motor"),
-                ("delta_virtual_energy", "Energia Virtual"),
-                ("delta_regen_map", "Mapa Regen"),
+            (f"🔥 {_('engine_energy')}", [
+                ("delta_radiator", _("radiator")),
+                ("delta_engine_mix", _("engine_mix")),
+                ("delta_virtual_energy", _("virtual_energy")),
+                ("delta_regen_map", _("regen_map")),
             ], "advanced"),
         ]
 
@@ -843,13 +856,12 @@ class SetupTab(ctk.CTkFrame):
     def _show_welcome(self):
         """Mostra mensagem de boas-vindas no chat."""
         self._add_message(
-            "Olá! Sou seu Engenheiro Virtual. 🏁\n\n"
-            "Me diga o que está sentindo no carro e eu vou sugerir "
-            "ajustes no setup. Você pode:\n\n"
-            "• Descrever um problema (ex: 'o carro está com understeer')\n"
-            "• Clicar em uma frase sugerida abaixo\n"
-            "• Usar os botões de ação ao lado\n\n"
-            "Comece carregando um arquivo .svm base no painel à direita!",
+            f"{_('welcome_message')}\n\n"
+            f"{_('welcome_description')}\n\n"
+            f"{_('welcome_step1')}\n"
+            f"{_('welcome_step2')}\n"
+            f"{_('welcome_step3')}\n\n"
+            f"{_('welcome_start')}",
             sender="ai",
         )
 
@@ -1076,7 +1088,7 @@ class SetupTab(ctk.CTkFrame):
         # Tentar usar LLM se disponível
         llm = getattr(self.engine, "llm_advisor", None)
         if llm and llm.enabled:
-            self._add_message("⏳ Consultando IA...", sender="system")
+            self._add_message(_("msg_consulting_ai"), sender="system")
             telemetry_ctx = self._get_telemetry_context()
             car_class = getattr(self.engine, "_car_class", None) or "hypercar"
 
@@ -1522,7 +1534,7 @@ class SetupTab(ctk.CTkFrame):
             return
         svm = self.engine.get_base_setup()
         if not svm:
-            self._add_message("Nenhum setup base carregado.", sender="system")
+            self._add_message(_("msg_no_base_loaded"), sender="system")
             return
 
         params = svm.get_adjustable_params()
@@ -1559,13 +1571,86 @@ class SetupTab(ctk.CTkFrame):
             text="Nenhum setup carregado",
             text_color=COLORS["text_secondary"],
         )
-        self._add_message("Setup base removido.", sender="system")
+        self._add_message(_("msg_base_removed"), sender="system")
 
         app = self.winfo_toplevel()
         if hasattr(app, "_on_base_cleared"):
             app._on_base_cleared()
 
     # ─── Ações ──────────────────────────────────────────
+
+    def _on_auto_detect_generate(self):
+        """
+        Detecta automaticamente o carro na pista via Shared Memory,
+        busca o melhor setup histórico no banco e gera um novo .svm.
+        """
+        if not self.engine or not hasattr(self.engine, "auto_detect_and_generate_setup"):
+            self._add_message(
+                "Engine não disponível.", sender="system",
+            )
+            return
+
+        self._add_message(
+            "🔍 Detectando carro e pista via Shared Memory...",
+            sender="system",
+        )
+
+        def _do():
+            try:
+                new_path, source, novo_combo = self.engine.auto_detect_and_generate_setup(climate="seco")
+                car = getattr(self.engine, "_car_name", "") or "Desconhecido"
+                track = getattr(self.engine, "_track_name", "") or "Desconhecida"
+
+                def _update():
+                    name = Path(new_path).name
+                    self._base_info.configure(
+                        text=f"🎮 {car}\n📍 {track}\n📄 {name}",
+                        text_color=COLORS["accent_green"],
+                    )
+                    # Recarregar widgets de delta
+                    if hasattr(self.engine, "get_base_setup"):
+                        svm = self.engine.get_base_setup()
+                        if svm:
+                            self._rebuild_dynamic_adjustable_widgets(svm)
+                            self._refresh_widget_current_values()
+
+                    install_lap_tip = (
+                        "\n\n⚠️ **Primeira vez neste combo carro×pista.**\n"
+                        "Recomendo fazer uma **volta de instalação** para:\n"
+                        "• Verificar se o carro está dirigível\n"
+                        "• Calibrar pneus e freios\n"
+                        "• Coletar dados reais para o próximo setup\n\n"
+                        "Dirija 1 volta e peça nova sugestão para ajuste fino."
+                        if novo_combo else ""
+                    )
+
+                    self._add_message(
+                        f"✅ Setup gerado automaticamente!\n\n"
+                        f"🏎 Carro: **{car}**\n"
+                        f"📍 Pista: **{track}**\n"
+                        f"📁 Fonte: {source}\n"
+                        f"💾 Arquivo: `{name}`\n\n"
+                        f"O arquivo foi salvo na mesma pasta do template. "
+                        f"Carregue-o no jogo para usar."
+                        + install_lap_tip,
+                        sender="ai",
+                    )
+                    app = self.winfo_toplevel()
+                    if hasattr(app, "_on_base_loaded"):
+                        app._on_base_loaded(str(new_path))
+
+                self.after(0, _update)
+
+            except ValueError as e:
+                self.after(0, lambda: self._add_message(
+                    f"⚠️ {e}", sender="system",
+                ))
+            except Exception as e:
+                self.after(0, lambda: self._add_message(
+                    f"❌ Erro ao gerar setup: {e}", sender="system",
+                ))
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_create_setup(self):
         """Abre diálogo de criação de novo setup."""
@@ -1695,10 +1780,10 @@ class SetupTab(ctk.CTkFrame):
     def _on_request_ai(self):
         """Pede sugestão da IA em background thread."""
         if not self.engine or not hasattr(self.engine, "request_suggestion"):
-            self._add_message("Engine não disponível.", sender="system")
+            self._add_message(_("msg_engine_unavailable"), sender="system")
             return
 
-        self._add_message("⏳ Pedindo sugestão da IA...", sender="system")
+        self._add_message(_("msg_requesting_ai"), sender="system")
         self._btn_send.configure(state="disabled")
 
         def _work():
@@ -1706,9 +1791,7 @@ class SetupTab(ctk.CTkFrame):
                 deltas, warnings = self.engine.request_suggestion()
                 display_deltas = getattr(self.engine, '_last_display_deltas', {})
                 self.after(0, lambda: self._finish_suggestion(
-                    display_deltas, warnings, "🧠 Sugestões da IA geradas! "
-                    "Veja o painel à direita.\nClique em 'Aplicar Ajustes' "
-                    "quando estiver satisfeito."))
+                    display_deltas, warnings, _("msg_ai_suggestions_ready")))
             except Exception as e:
                 self.after(0, lambda: self._add_message(f"Erro: {e}", sender="system"))
             finally:
@@ -1719,10 +1802,10 @@ class SetupTab(ctk.CTkFrame):
     def _on_request_heuristics(self):
         """Pede sugestão das heurísticas em background thread."""
         if not self.engine or not hasattr(self.engine, "request_heuristic_suggestion"):
-            self._add_message("Engine não disponível.", sender="system")
+            self._add_message(_("msg_engine_unavailable"), sender="system")
             return
 
-        self._add_message("⏳ Calculando heurísticas...", sender="system")
+        self._add_message(_("msg_calculating_heuristics"), sender="system")
         self._btn_send.configure(state="disabled")
 
         def _work():
@@ -1730,9 +1813,7 @@ class SetupTab(ctk.CTkFrame):
                 deltas, warnings = self.engine.request_heuristic_suggestion()
                 display_deltas = getattr(self.engine, '_last_display_deltas', {})
                 self.after(0, lambda: self._finish_suggestion(
-                    display_deltas, warnings, "📐 Sugestões heurísticas geradas! "
-                    "Veja o painel à direita.\nSão baseadas em regras de "
-                    "engenharia veicular."))
+                    display_deltas, warnings, _("msg_heuristics_ready")))
             except Exception as e:
                 self.after(0, lambda: self._add_message(f"Erro: {e}", sender="system"))
             finally:
@@ -1753,7 +1834,7 @@ class SetupTab(ctk.CTkFrame):
         # Obter deltas atuais (IA + modificações manuais do usuário)
         current_deltas = self._get_all_current_deltas()
         if not current_deltas:
-            self._add_message("Nenhuma sugestão para aplicar.", sender="system")
+            self._add_message(_("msg_no_suggestion"), sender="system")
             return
 
         # Converter para formato SVM e atualizar no engine
@@ -1811,6 +1892,23 @@ class SetupTab(ctk.CTkFrame):
 
             return f"⛽ FuelSetting aplicado: {old_index} → {new_index} L"
 
+        def _ies_badge() -> str:
+            """Calcula e formata o badge de Índice de Eficiência do Setup (IES)."""
+            try:
+                from core.reward import classify_setup_efficiency
+                ies = classify_setup_efficiency(
+                    delta_laptime=getattr(self.engine, "_last_delta_laptime", 0.0),
+                    delta_consumption=getattr(self.engine, "_last_delta_consumption", 0.0),
+                )
+                _ICONS = {
+                    "EXCELENTE": "🟢", "AGRESSIVO": "🟠",
+                    "CONSERVADOR": "🔵", "DESASTROSO": "🔴",
+                }
+                icon = _ICONS.get(ies, "⚪")
+                return f"\n{icon} IES — Eficiência do Setup: **{ies}**\n"
+            except Exception:
+                return ""
+
         def _do_apply():
             mode = mode_var.get()
             use_as_base = use_as_base_var.get()
@@ -1842,7 +1940,8 @@ class SetupTab(ctk.CTkFrame):
                         f"✏️ Arquivo editado no mesmo local.\n"
                         + ("📂 Backup criado antes de salvar.\n" if create_backup else "") +
                         (f"{fuel_note}\n" if fuel_note else "") +
-                        f"Volte para a pista e me diga como ficou!",
+                        _ies_badge() +
+                        "Volte para a pista e me diga como ficou!",
                         sender="ai",
                     )
                     if use_as_base:
@@ -1876,7 +1975,8 @@ class SetupTab(ctk.CTkFrame):
                         f"✅ Novo setup criado: **{new_path.name}**\n"
                         f"📁 Salvo em: {new_path.parent}\n"
                         + (f"{fuel_note}\n" if fuel_note else "") +
-                        f"O arquivo base original NÃO foi alterado.",
+                        _ies_badge() +
+                        "O arquivo base original NÃO foi alterado.",
                         sender="ai",
                     )
                     if use_as_base:
@@ -1919,7 +2019,8 @@ class SetupTab(ctk.CTkFrame):
                         f"✅ Mudanças aplicadas em: **{Path(filepath).name}**\n"
                         f"✏️ Arquivo editado no mesmo local.\n"
                         + ("📂 Backup criado antes de salvar.\n" if create_backup else "")
-                        + (f"{fuel_note}" if fuel_note else ""),
+                        + (f"{fuel_note}" if fuel_note else "")
+                        + _ies_badge(),
                         sender="ai",
                     )
                     if use_as_base:
@@ -1984,6 +2085,18 @@ class SetupTab(ctk.CTkFrame):
             text="     Um novo .svm será criado, o arquivo base NÃO muda.",
             font=("Arial", 10), text_color=COLORS["text_secondary"],
         ).pack(anchor="w", padx=25)
+
+        # Preview do nome SECTORFLOW gerado automaticamente
+        try:
+            _preview_name = self.engine._generate_setorflow_path("ajustado").name
+        except Exception:
+            _preview_name = "SECTORFLOW_DRY_???_???_DDMM_V1_Q.svm"
+        ctk.CTkLabel(
+            content_scroll,
+            text=f"     📝 Nome gerado: {_preview_name}",
+            font=("JetBrains Mono", 10),
+            text_color=COLORS["accent_cyan"],
+        ).pack(anchor="w", padx=25, pady=(2, 8))
 
         # Opção 3: Escolher outro arquivo
         ctk.CTkRadioButton(
@@ -2821,7 +2934,7 @@ class SetupTab(ctk.CTkFrame):
         if not self.engine:
             return
 
-        self._add_message("📂 Escaneando todos os setups disponíveis...", sender="system")
+        self._add_message(_("msg_scanning_setups"), sender="system")
 
         try:
             result = self.engine.learn_from_all_setups()

@@ -220,8 +220,37 @@ class DatabaseManager:
             (track_name, folder_name)
         )
         self.conn.commit()
+        track_id = cursor.lastrowid
+
+        # A2: sincroniza dados de POI (TRACK_POIS) ao criar nova pista
+        try:
+            from core.reward import TRACK_POIS  # lazy import — evita import circular
+            key = track_name.upper().strip()
+            poi = TRACK_POIS.get(key)
+            if poi is None:
+                for k, v in TRACK_POIS.items():
+                    if k in key or key in k:
+                        poi = v
+                        break
+            if poi:
+                self.conn.execute(
+                    "UPDATE tracks SET downforce_level=?, straight_start=?, "
+                    "straight_end=?, critical_corner=? WHERE track_id=?",
+                    (
+                        poi.get("downforce_priority"),
+                        poi.get("main_straight_start"),
+                        poi.get("main_straight_end"),
+                        poi.get("critical_corner", ""),
+                        track_id,
+                    ),
+                )
+                self.conn.commit()
+                logger.debug("A2: POI sincronizado para pista %s", track_name)
+        except Exception as _exc:
+            logger.debug("A2: falha ao sincronizar POI para %s: %s", track_name, _exc)
+
         logger.info("Nova pista registrada: %s", track_name)
-        return cursor.lastrowid
+        return track_id
 
     def list_tracks(self) -> list[dict]:
         """Lista todas as pistas cadastradas."""
@@ -452,6 +481,75 @@ class DatabaseManager:
         self.conn.commit()
 
     # ============================================================
+    # HEURISTIC LOG (Validação de regras heurísticas)
+    # ============================================================
+
+    def log_heuristic_rule(self, session_id: int, after_lap: int,
+                           rule_name: str, condition: str,
+                           suggestion_text: str,
+                           delta_applied: str) -> int:
+        """
+        Registra uma regra heurística que foi disparada.
+
+        Returns:
+            log_id para posterior atualização de was_effective.
+        """
+        cursor = self.conn.execute(
+            """INSERT INTO heuristic_log
+               (session_id, after_lap, rule_name, rule_condition,
+                suggestion_text, delta_applied)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (session_id, after_lap, rule_name, condition,
+             suggestion_text, delta_applied),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def update_heuristic_effectiveness(self, log_id: int,
+                                       was_effective: int) -> None:
+        """
+        Marca se a regra foi efetiva (1) ou inefetiva (0).
+
+        Chamado após a próxima volta válida com o reward calculado.
+        """
+        self.conn.execute(
+            "UPDATE heuristic_log SET was_effective = ? WHERE log_id = ?",
+            (was_effective, log_id),
+        )
+        self.conn.commit()
+
+    def get_heuristic_conflict_report(self,
+                                      min_samples: int = 5) -> list[dict]:
+        """
+        Retorna regras heurísticas que falharam em mais de 50% dos casos.
+
+        Útil para exibir "alertas de conflito" na GUI — regras que o banco
+        de dados contradiz empiricamente.
+
+        Args:
+            min_samples: Número mínimo de avaliações para considerar.
+
+        Returns:
+            Lista de dicts com rule_name, total, effective, ineffective,
+            conflict_rate (0-1). Ordenado por conflict_rate DESC.
+        """
+        rows = self.conn.execute(
+            """SELECT rule_name,
+                      COUNT(*) AS total,
+                      SUM(CASE WHEN was_effective = 1 THEN 1 ELSE 0 END)
+                          AS effective,
+                      SUM(CASE WHEN was_effective = 0 THEN 1 ELSE 0 END)
+                          AS ineffective
+               FROM heuristic_log
+               WHERE was_effective IS NOT NULL
+               GROUP BY rule_name
+               HAVING COUNT(*) >= ?
+               ORDER BY (ineffective * 1.0 / total) DESC""",
+            (min_samples,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ============================================================
     # TRAINING DATA
     # ============================================================
     def save_training_data(self, session_id: int, car_id: int, track_id: int,
@@ -482,10 +580,11 @@ class DatabaseManager:
         Carrega dados de treinamento para um combo carro (e opcionalmente pista).
 
         Returns:
-            Lista de dicts com 'input', 'output', 'reward', 'weight'.
+            Lista de dicts com 'input', 'output', 'reward', 'weight',
+            'created_at' (ISO string para recência temporal no trainer).
         """
         query = """
-            SELECT input_vector, output_vector, reward, weight
+            SELECT input_vector, output_vector, reward, weight, created_at
             FROM training_data
             WHERE car_id = ? AND is_valid = 1
         """
@@ -506,6 +605,7 @@ class DatabaseManager:
                 "output": self._blob_to_numpy(r["output_vector"]),
                 "reward": r["reward"],
                 "weight": r["weight"],
+                "created_at": r["created_at"],
             })
         return result
 
@@ -1226,37 +1326,95 @@ class DatabaseManager:
         except Exception as e:
             logger.debug("Erro ao salvar setup efetivo: %s", e)
 
+    def check_car_track_history(self, car_id: int, track_id: int) -> dict:
+        """
+        Verifica se existe histórico para o combo carro×pista.
+
+        Returns:
+            dict com:
+            - ``has_data``: bool — True se há pelo menos 1 sessão registrada
+            - ``session_count``: int — número de sessões neste combo
+            - ``best_lap_time``: float | None — melhor volta conhecida
+            - ``last_weather``: str | None — último clima registrado
+            - ``last_track_temp``: float | None — última temperatura de pista
+        """
+        row = self.conn.execute(
+            """SELECT COUNT(*) as session_count,
+                      MIN(best_lap_time) as best_lap_time,
+                      MAX(s.started_at) as last_session
+               FROM sessions s
+               WHERE s.car_id = ? AND s.track_id = ?""",
+            (car_id, track_id),
+        ).fetchone()
+
+        session_count = row["session_count"] if row else 0
+
+        last_session_row = None
+        if session_count > 0:
+            last_session_row = self.conn.execute(
+                """SELECT weather, track_temp_c
+                   FROM sessions
+                   WHERE car_id = ? AND track_id = ?
+                   ORDER BY started_at DESC LIMIT 1""",
+                (car_id, track_id),
+            ).fetchone()
+
+        return {
+            "has_data": session_count > 0,
+            "session_count": session_count,
+            "best_lap_time": row["best_lap_time"] if row else None,
+            "last_weather": last_session_row["weather"] if last_session_row else None,
+            "last_track_temp": last_session_row["track_temp_c"] if last_session_row else None,
+        }
+
     def get_recommended_setup_base(self, car_id: int, track_id: int,
-                                   weather: str = "dry") -> dict | None:
+                                   weather: str = "dry",
+                                   track_temp_c: float | None = None,
+                                   temp_tolerance_c: float = 10.0) -> dict | None:
         """
         Retorna o setup base recomendado da memória persistente.
         Prioriza setups que funcionaram nas mesmas condições.
+
+        Args:
+            car_id: ID do carro
+            track_id: ID da pista
+            weather: Condição climática ("dry" / "wet" / "mixed")
+            track_temp_c: Temperatura atual da pista (°C). Se fornecida, filtra
+                          setups por temperatura ±temp_tolerance_c.
+            temp_tolerance_c: Tolerância de temperatura (padrão ±10°C).
         """
         import json
-        
+
         memory = self.load_car_track_memory(car_id, track_id)
         if not memory:
             return None
-        
+
         # Primeiro, tentar setups específicos para a condição
         effective_json = memory.get("effective_setups_json", "[]")
         try:
             effective_list = json.loads(effective_json)
-            
+
             # Filtrar por clima
             same_weather = [s for s in effective_list if s.get("weather") == weather]
-            if same_weather:
-                best = min(same_weather, key=lambda x: x.get("lap_time", 999))
+            candidates = same_weather if same_weather else effective_list
+
+            # Filtrar por temperatura da pista quando disponível
+            if track_temp_c is not None and track_temp_c > 0:
+                temp_filtered = [
+                    s for s in candidates
+                    if s.get("track_temp_c") is not None
+                    and abs(s["track_temp_c"] - track_temp_c) <= temp_tolerance_c
+                ]
+                if temp_filtered:
+                    candidates = temp_filtered
+
+            if candidates:
+                best = min(candidates, key=lambda x: x.get("lap_time", 999))
                 return best.get("indices")
-            
-            # Se não houver do mesmo clima, pegar o melhor geral
-            if effective_list:
-                best = min(effective_list, key=lambda x: x.get("lap_time", 999))
-                return best.get("indices")
-                
+
         except (json.JSONDecodeError, TypeError):
             pass
-        
+
         # Fallback: best_setup_indices
         return memory.get("best_setup_indices")
 
@@ -2203,5 +2361,23 @@ class DatabaseManager:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_class_patterns_unique
                 ON class_setup_patterns(car_class, COALESCE(track_id, 0), weather_condition);
         """)
+
+        # ─── Migração A1: tracks — colunas de POI ───
+        cursor = self.conn.execute("PRAGMA table_info(tracks)")
+        tracks_cols = {row["name"] for row in cursor.fetchall()}
+        for col_name, col_def in {
+            "downforce_level": "TEXT",
+            "straight_start": "REAL",
+            "straight_end": "REAL",
+            "critical_corner": "TEXT",
+        }.items():
+            if col_name not in tracks_cols:
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE tracks ADD COLUMN {col_name} {col_def}",
+                    )
+                    logger.info("Migração A1: coluna %s em tracks", col_name)
+                except Exception as e:
+                    logger.debug("Erro ao adicionar %s em tracks: %s", col_name, e)
 
         self.conn.commit()

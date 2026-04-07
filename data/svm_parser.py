@@ -85,6 +85,99 @@ class SVMFile:
         """Retorna dict {full_key: index} de todos os parâmetros ajustáveis."""
         return {p.full_key: p.index for p in self.params.values() if p.adjustable}
 
+    def get_fuel_ratio(self) -> float:
+        """
+        Calcula quantos litros vale cada clique de índice de combustível
+        para ESTE carro específico.
+
+        Parseia a linha FuelSetting=INDICE//VALOR para extrair a proporção.
+        Exemplo: "FuelSetting=95//100.0L" → 100.0 / 95 ≈ 1.053 L/clique.
+
+        Returns:
+            Litros por clique. Retorna 1.0 se não for possível calcular.
+        """
+        fuel_param = None
+        for key, param in self.params.items():
+            if "GENERAL" in key.upper() and "FUEL" in key.upper():
+                fuel_param = param
+                break
+        if fuel_param is None:
+            # Busca mais ampla: qualquer FuelSetting
+            for key, param in self.params.items():
+                if "FUEL" in param.name.upper():
+                    fuel_param = param
+                    break
+
+        if fuel_param is None or fuel_param.index <= 0:
+            return 1.0
+
+        # Tentar extrair valor numérico da descrição
+        # Exemplos: "100.0L", "0.87", "75L", "86%"
+        import re as _re
+        num_match = _re.search(r"([\d]+\.?[\d]*)", fuel_param.description)
+        if not num_match:
+            return 1.0
+        try:
+            valor_real = float(num_match.group(1))
+        except ValueError:
+            return 1.0
+
+        if valor_real <= 0:
+            return 1.0
+
+        return valor_real / fuel_param.index
+
+    def set_fuel_liters(self, litros_desejados: float) -> None:
+        """
+        Define o combustível do setup convertendo litros para o índice
+        correto para este carro específico.
+
+        Usa get_fuel_ratio() para calcular a proporção e atualiza
+        o FuelSetting no arquivo.
+
+        Args:
+            litros_desejados: Quantidade de combustível em litros.
+        """
+        if litros_desejados <= 0:
+            return
+
+        ratio = self.get_fuel_ratio()
+        novo_indice = max(0, int(litros_desejados / ratio))
+
+        # Localizar e atualizar o parâmetro FuelSetting
+        fuel_param = None
+        for key, param in self.params.items():
+            if "GENERAL" in key.upper() and "FUEL" in param.name.upper():
+                fuel_param = param
+                break
+        if fuel_param is None:
+            for key, param in self.params.items():
+                if "FUEL" in param.name.upper():
+                    fuel_param = param
+                    break
+
+        if fuel_param is None:
+            logger.warning("set_fuel_liters: FuelSetting não encontrado no arquivo.")
+            return
+
+        old_index = fuel_param.index
+        fuel_param.index = novo_indice
+
+        # Atualizar a linha raw preservando descrição
+        import re as _re
+        old_line = self.raw_lines[fuel_param.line_number]
+        new_line = _re.sub(
+            r"^(\w+Setting\s*=\s*)\d+(\s*//.*)$",
+            rf"\g<1>{novo_indice}\2",
+            old_line,
+        )
+        self.raw_lines[fuel_param.line_number] = new_line
+
+        logger.info(
+            "Combustível ajustado: %.1fL → índice %d (era %d, ratio=%.3fL/clique)",
+            litros_desejados, novo_indice, old_index, ratio,
+        )
+
 
 def parse_svm(filepath: str | Path) -> SVMFile:
     """
@@ -323,3 +416,85 @@ def build_param_conversion_table(svm: SVMFile) -> dict[str, dict]:
         table[param.full_key] = entry
 
     return table
+
+
+def calculate_fuel_compensation(fuel_delta_liters: float,
+                                car_class: str = "") -> dict[str, int]:
+    """
+    Calcula os cliques de Ride Height necessários para compensar
+    a adição de combustível (peso extra).
+
+    Regra base: +10L ≈ +1 clique de Ride Height em todas as rodas.
+    Carros mais leves (LMP3, GT3) podem precisar de mais compensação.
+
+    Args:
+        fuel_delta_liters: Litros adicionados (pode ser negativo para remoção).
+        car_class: Classe do carro (opcional) para ajustar o fator.
+
+    Returns:
+        Dict com deltas de ride height {ride_height_fl, _fr, _rl, _rr}.
+        Retorna dict vazio se delta for zero ou insignificante.
+    """
+    if abs(fuel_delta_liters) < 5:
+        return {}
+
+    # Fator por classe: carros mais leves são mais sensíveis ao peso extra
+    class_factors: dict[str, float] = {
+        "lmp3": 1.2,
+        "gt3": 1.0,
+        "lmgt3": 1.0,
+        "gte": 1.0,
+        "lmp2": 0.9,
+        "hypercar": 0.8,
+        "lmh": 0.8,
+        "lmdh": 0.8,
+    }
+    factor = class_factors.get(car_class.lower(), 1.0)
+
+    # +10L → +1 clique de ride height (proporcional com fator de classe)
+    clicks_raw = (fuel_delta_liters / 10.0) * factor
+    clicks = int(round(clicks_raw))
+
+    if clicks == 0:
+        return {}
+
+    return {
+        "ride_height_fl": clicks,
+        "ride_height_fr": clicks,
+        "ride_height_rl": clicks,
+        "ride_height_rr": clicks,
+    }
+
+
+def write_notes_field(svm: SVMFile, notes_text: str) -> None:
+    """
+    Escreve ou atualiza o campo Notes= no arquivo .svm em memória.
+
+    Se a linha Notes= já existir, substitui. Se não existir, insere
+    no final da seção [GENERAL] ou no final do arquivo.
+
+    Args:
+        svm: SVMFile com raw_lines a modificar (in-place).
+        notes_text: Texto a escrever no campo Notes=.
+                    Aspas duplas internas serão escapadas.
+    """
+    # Sanitizar o texto para evitar quebra de linha no .svm
+    safe_text = notes_text.replace("\n", " ").replace("\r", "").replace('"', "'")
+    notes_line = f'Notes="{safe_text}"'
+
+    # Procurar linha Notes= existente
+    for i, line in enumerate(svm.raw_lines):
+        if line.strip().lower().startswith("notes="):
+            svm.raw_lines[i] = notes_line
+            logger.debug("Campo Notes= atualizado na linha %d.", i)
+            return
+
+    # Não encontrou — inserir após [GENERAL] ou no final
+    insert_pos = len(svm.raw_lines)
+    for i, line in enumerate(svm.raw_lines):
+        if re.match(r"^\[GENERAL\]", line.strip(), re.IGNORECASE):
+            insert_pos = i + 1
+            break
+
+    svm.raw_lines.insert(insert_pos, notes_line)
+    logger.debug("Campo Notes= inserido na posição %d.", insert_pos)

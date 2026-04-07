@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from core.brain import INPUT_FEATURES, NUM_INPUTS
+from core.reward import TRACK_POIS
 
 logger = logging.getLogger("LMU_VE.telemetry")
 
@@ -59,13 +60,22 @@ class LapAccumulator:
     pitch_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
     roll_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
     heave_samples: deque = field(default_factory=lambda: deque(maxlen=MAX_SAMPLES_PER_LAP))
-    # Velocidade máxima
+    # Velocidade máxima (global)
     max_speed: float = 0.0
+    # Velocidade máxima na reta principal (geográfica)
+    max_straight_speed: float = 0.0
     # Combustível
     fuel_start: float = 0.0
     fuel_end: float = 0.0
     # Contadores
     sample_count: int = 0
+    # Frames fora da pista (|path_lateral| > |track_edge|)
+    off_track_frames: int = 0
+    # B1: perfil térmico em 20 micro-setores (5% de pista cada)
+    # Cada bin acumula a temperatura outer (média das 4 rodas) naquele trecho.
+    thermal_bins: list[list[float]] = field(default_factory=lambda: [[] for _ in range(20)])
+    # B2: amostras de aceleração longitudinal na zona pré-reta principal
+    pre_straight_accel_samples: list[float] = field(default_factory=list)
 
     def reset(self):
         """Reseta para nova volta."""
@@ -82,9 +92,13 @@ class LapAccumulator:
         self.roll_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
         self.heave_samples = deque(maxlen=MAX_SAMPLES_PER_LAP)
         self.max_speed = 0.0
+        self.max_straight_speed = 0.0
         self.fuel_start = 0.0
         self.fuel_end = 0.0
         self.sample_count = 0
+        self.off_track_frames = 0
+        self.thermal_bins = [[] for _ in range(20)]  # B1: reset bins térmicos
+        self.pre_straight_accel_samples = []          # B2: reset zona pré-reta
 
 
 @dataclass
@@ -103,6 +117,13 @@ class LapSummary:
     track_temp: float
     ambient_temp: float
     rain: float
+    num_penalties: int = 0       # penalidades ativas ao fim da volta (track limits)
+    wheels_off_track: int = 0    # frames detectados fisicamente fora da pista
+    max_straight_speed: float = 0.0  # velocidade máxima na reta principal (km/h)
+    # B1: perfil térmico em 20 micro-setores (5% de pista cada)
+    thermal_profile: list[float] = field(default_factory=lambda: [0.0] * 20)
+    # B2: aceleração longitudinal média na zona pré-reta (m/s²)
+    pre_straight_exit_traction: float = 0.0
 
 
 class TelemetryReader:
@@ -133,6 +154,9 @@ class TelemetryReader:
         self._last_summary: LapSummary | None = None
         self._summaries: list[LapSummary] = []
         self._connected = False
+
+        # Histórico de tempos válidos na sessão (para filtro de outlier)
+        self._session_valid_lap_times: list[float] = []
 
         # Callback para notificar nova volta completa
         self.on_lap_completed: callable | None = None
@@ -390,14 +414,80 @@ class TelemetryReader:
         except Exception:
             pass
 
-        # Velocidade máxima
+        # Velocidade máxima (global)
         speed = self._vehicle.speed()
         if speed > acc.max_speed:
             acc.max_speed = speed
 
+        # Velocidade máxima na reta principal (geográfica via TRACK_POIS)
+        track_cfg = None  # B2: inicializa antes do try para acesso externo
+        try:
+            track_name_upper = (self._session.track_name() or "").upper().strip()
+            track_cfg = TRACK_POIS.get(track_name_upper)
+            if not track_cfg:
+                for key in TRACK_POIS:
+                    if key in track_name_upper or track_name_upper in key:
+                        track_cfg = TRACK_POIS[key]
+                        break
+            if track_cfg:
+                lap_pct = self._lap.progress()  # 0.0 – 1.0
+                start = track_cfg["main_straight_start"]
+                end = track_cfg["main_straight_end"]
+                if start < end:
+                    on_straight = start <= lap_pct <= end
+                else:  # reta que cruza a linha de chegada
+                    on_straight = lap_pct >= start or lap_pct <= end
+                if on_straight:
+                    speed_kmh = speed * 3.6
+                    if speed_kmh > acc.max_straight_speed:
+                        acc.max_straight_speed = speed_kmh
+        except Exception:
+            pass
+
+        # B1: perfil térmico por micro-setor (outer temp média das 4 rodas)
+        try:
+            lap_pct = self._lap.progress()  # 0.0 – 1.0
+            bin_idx = min(19, int(lap_pct * 20))
+            # outer temp: índices 2, 5, 8, 11 no array ICO × 4 rodas
+            outer_temps = [temps[2], temps[5], temps[8], temps[11]]
+            valid_outers = [t for t in outer_temps if t > 0]
+            if valid_outers:
+                acc.thermal_bins[bin_idx].append(
+                    sum(valid_outers) / len(valid_outers)
+                )
+        except Exception:
+            pass
+
+        # B2: capturar acel longitudinal na zona pré-reta se definida no POI
+        try:
+            if track_cfg:
+                pz_start = track_cfg.get("pre_straight_zone_start")
+                pz_end = track_cfg.get("pre_straight_zone_end")
+                if pz_start is not None and pz_end is not None:
+                    lap_pct_now = self._lap.progress()
+                    if pz_start < pz_end:
+                        in_pre_zone = pz_start <= lap_pct_now <= pz_end
+                    else:  # zona que cruza linha de chegada
+                        in_pre_zone = lap_pct_now >= pz_start or lap_pct_now <= pz_end
+                    if in_pre_zone:
+                        accel_long = self._vehicle.accel_longitudinal()
+                        if accel_long > 0:  # apenas fase de aceleração
+                            acc.pre_straight_accel_samples.append(accel_long)
+        except Exception:
+            pass
+
         # Combustível atual
         acc.fuel_end = self._vehicle.fuel()
         acc.wear_end = self._tyre.wear()
+
+        # Detectar frames fora da pista: |path_lateral| > |track_edge|
+        try:
+            path_lat = abs(self._vehicle.path_lateral())
+            t_edge = abs(self._vehicle.track_edge())
+            if t_edge > 0.1 and path_lat > t_edge:
+                acc.off_track_frames += 1
+        except Exception:
+            pass
 
         acc.sample_count += 1
 
@@ -412,7 +502,31 @@ class TelemetryReader:
             return
 
         # Checar validade
-        is_valid = self._vehicle.count_lap_flag() == 2  # 2 = conta volta E tempo
+        count_lap_ok = self._vehicle.count_lap_flag() == 2  # 2 = conta volta E tempo
+        num_penalties = 0
+        try:
+            num_penalties = int(self._vehicle.number_penalties())
+        except Exception:
+            pass
+        is_valid = count_lap_ok and (num_penalties == 0)
+
+        # Filtro de outlier (Item A): volta > 110% da mediana da sessão = outlier
+        if is_valid and self._session_valid_lap_times:
+            session_median = float(np.median(self._session_valid_lap_times))
+            if lap_time > session_median * 1.10:
+                is_valid = False
+                logger.info(
+                    "Volta %d marcada inválida (outlier): %.3fs > 110%% da mediana %.3fs",
+                    self._current_lap_num - 1, lap_time, session_median,
+                )
+
+        # Atualizar histórico de tempos válidos para próximas voltas
+        if count_lap_ok and lap_time > 0:
+            ref = float(np.median(self._session_valid_lap_times)) if self._session_valid_lap_times else lap_time
+            if lap_time <= ref * 1.20:  # não adiciona voltas extremamente lentas ao histórico
+                self._session_valid_lap_times.append(lap_time)
+                if len(self._session_valid_lap_times) > 20:
+                    self._session_valid_lap_times.pop(0)
 
         # Construir vetor de features (49 valores)
         features = np.zeros(NUM_INPUTS, dtype=np.float32)
@@ -538,6 +652,20 @@ class TelemetryReader:
         s3 = lap_time - s2 if s2 > 0 else 0.0
         s2_only = s2 - s1 if s2 > 0 and s1 > 0 else 0.0
 
+        # B1: calcular perfil térmico final (média por bin)
+        thermal_profile = [
+            float(sum(b) / len(b)) if b else 0.0
+            for b in acc.thermal_bins
+        ]
+
+        # B2: média de acel na zona pré-reta
+        pre_straight_exit_traction = 0.0
+        if acc.pre_straight_accel_samples:
+            pre_straight_exit_traction = (
+                sum(acc.pre_straight_accel_samples)
+                / len(acc.pre_straight_accel_samples)
+            )
+
         summary = LapSummary(
             lap_number=self._current_lap_num - 1,  # volta que acabou
             lap_time=lap_time,
@@ -552,6 +680,11 @@ class TelemetryReader:
             track_temp=self._session.track_temperature(),
             ambient_temp=self._session.ambient_temperature(),
             rain=self._session.raininess(),
+            num_penalties=num_penalties,
+            wheels_off_track=acc.off_track_frames,
+            max_straight_speed=acc.max_straight_speed,
+            thermal_profile=thermal_profile,
+            pre_straight_exit_traction=pre_straight_exit_traction,
         )
 
         with self._lock:
@@ -559,10 +692,10 @@ class TelemetryReader:
             self._summaries.append(summary)
 
         logger.info(
-            "Volta %d finalizada: %.3fs (%s @ %s) — %d amostras, válida=%s",
+            "Volta %d finalizada: %.3fs (%s @ %s) — %d amostras, válida=%s, penalidades=%d, fora_pista=%d",
             summary.lap_number, summary.lap_time,
             summary.vehicle_name, summary.track_name,
-            acc.sample_count, is_valid,
+            acc.sample_count, is_valid, num_penalties, acc.off_track_frames,
         )
 
         # Notificar callback

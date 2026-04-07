@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS tracks (
     track_length_m      REAL,
     num_sectors         INTEGER DEFAULT 3,
     track_type          TEXT,
+    -- A1: dados de POI (Point of Interest) por pista
+    downforce_level     TEXT,
+    straight_start      REAL,
+    straight_end        REAL,
+    critical_corner     TEXT,
     first_seen          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

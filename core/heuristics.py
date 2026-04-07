@@ -151,6 +151,8 @@ CLASS_CONFIG = {
         "brake_temp_max_c": 700,                # Temperatura máxima dos freios
         "aero_balance_critical": True,
         "has_regen": True,
+        "has_tc": False,
+        "has_abs": False,
     },
     "lmp2": {
         "ride_height_sensitivity": "high",
@@ -178,11 +180,130 @@ CLASS_CONFIG = {
         "has_tc": True,
         "has_abs": True,
     },
+    # GTE — carros GT de endurance clássicos (Ferrari 488 GTE, Porsche 911 RSR, etc.)
+    # Semelhante ao GT3 mas com mais carga aerodinâmica e pneus mais lárguros.
+    # Menos grip mecânico que LMP. Tem TC e ABS. Sensível a camber e pressão.
+    "gte": {
+        "ride_height_sensitivity": "medium",
+        "camber_range_front": (-3.5, -1.0),
+        "camber_range_rear": (-3.0, -0.5),
+        "tire_pressure_target_kpa": (150, 170),
+        "temp_target_c": (80, 100),
+        "temp_spread_max_c": 12,
+        "brake_temp_max_c": 750,
+        "aero_balance_critical": False,
+        "has_regen": False,
+        "has_tc": True,
+        "has_abs": False,
+    },
+    # GT3 — alias para lmgt3 (mesmo perfil)
+    "gt3": {
+        "ride_height_sensitivity": "medium",
+        "camber_range_front": (-3.0, -0.5),
+        "camber_range_rear": (-2.5, 0.0),
+        "tire_pressure_target_kpa": (155, 175),
+        "temp_target_c": (80, 100),
+        "temp_spread_max_c": 15,
+        "brake_temp_max_c": 800,
+        "aero_balance_critical": False,
+        "has_regen": False,
+        "has_tc": True,
+        "has_abs": True,
+    },
+    # LMP3 — protótipos menores, sem nível de carga aero do LMP2.
+    # Mecânica similar ao GT3 mas chassi aberto. Sem ABS, pode ter TC limitado.
+    "lmp3": {
+        "ride_height_sensitivity": "medium",
+        "camber_range_front": (-3.5, -1.0),
+        "camber_range_rear": (-2.5, -0.5),
+        "tire_pressure_target_kpa": (140, 160),
+        "temp_target_c": (82, 102),
+        "temp_spread_max_c": 12,
+        "brake_temp_max_c": 700,
+        "aero_balance_critical": True,
+        "has_regen": False,
+        "has_tc": False,
+        "has_abs": False,
+    },
+}
+
+# Mapeamento de aliases para classe normalizada (do banco de dados)
+_CLASS_ALIASES = {
+    "gt3": "gt3",
+    "lmgt3": "lmgt3",
+    "gte": "gte",
+    "lmp2": "lmp2",
+    "lmp3": "lmp3",
+    "hypercar": "hypercar",
+    "lmh": "hypercar",
+    "lmdh": "hypercar",
+}
+
+# ---------------------------------------------------------------------------
+# G7.1 — Perfis de estratégia por categoria de carro
+# ---------------------------------------------------------------------------
+# Cada categoria recebe um perfil de estratégia que define quais eixos de
+# ajuste devem ser priorizados nas sugestões heurísticas.
+_CLASS_STRATEGY: dict[str, str] = {
+    "hypercar": "ELECTRONIC_HYBRID",  # Hybrid, regen, gerenciamento elétrico > aero
+    "lmp2":     "AERO_DRIVEN",        # Aero/rake define performance; sem TC/ABS
+    "lmp3":     "AERO_DRIVEN",        # Igual LMP2: aero + amortecedores
+    "gt3":      "MECHANICAL_GRIP",    # Molas, diferencial, pressão > aero
+    "lmgt3":    "MECHANICAL_GRIP",
+    "gte":      "MECHANICAL_GRIP",
+}
+
+# Ordem de categorias de parâmetros por perfil de estratégia.
+# As categorias espelham os valores de get_param_category().
+_STRATEGY_PARAM_PRIORITY: dict[str, list[str]] = {
+    "AERO_DRIVEN":       ["aero", "dampers", "mechanical", "fine_tune", "electronics"],
+    "MECHANICAL_GRIP":   ["mechanical", "fine_tune", "aero", "dampers", "electronics"],
+    "ELECTRONIC_HYBRID": ["electronics", "aero", "mechanical", "dampers", "fine_tune"],
 }
 
 
+def apply_rules(car_class: str) -> tuple[str, list[str]]:
+    """
+    Retorna o perfil de estratégia e a ordem de prioridade de categorias
+    de parâmetros para a classe de carro fornecida.
+
+    Args:
+        car_class: Classe do carro (ex.: "lmp2", "gt3", "hypercar").
+
+    Returns:
+        Tupla (nome_da_estrategia, lista_de_categorias_em_prioridade).
+    """
+    normalized = _CLASS_ALIASES.get(car_class.lower(), car_class.lower())
+    strategy = _CLASS_STRATEGY.get(normalized, "MECHANICAL_GRIP")
+    priority = _STRATEGY_PARAM_PRIORITY.get(strategy,
+                                             _STRATEGY_PARAM_PRIORITY["MECHANICAL_GRIP"])
+    return strategy, list(priority)
+
+
+def sort_suggestions_by_class(suggestions: list["HeuristicSuggestion"],
+                               car_class: str) -> list["HeuristicSuggestion"]:
+    """
+    Re-ordena sugestões de acordo com a prioridade de categorias da classe
+    do carro, mantendo a sub-ordenação por prioridade numérica original.
+
+    Args:
+        suggestions: Lista de HeuristicSuggestion já filtrada/anotada.
+        car_class: Classe do carro para buscar o perfil de estratégia.
+
+    Returns:
+        Nova lista ordenada: 1º pela posição da categoria no perfil,
+        2º pelo campo `priority` (numérico menor = mais importante).
+    """
+    _, priority_order = apply_rules(car_class)
+    cat_index = {cat: i for i, cat in enumerate(priority_order)}
+    return sorted(suggestions,
+                  key=lambda s: (cat_index.get(s.category, len(priority_order)),
+                                 s.priority))
+
+
 def analyze_telemetry(telemetry: dict, car_class: str = "hypercar",
-                      level: str = "advanced") -> list[HeuristicSuggestion]:
+                      level: str = "advanced",
+                      summaries: list | None = None) -> list[HeuristicSuggestion]:
     """
     Analisa dados de telemetria e retorna sugestões heurísticas.
 
@@ -190,6 +311,7 @@ def analyze_telemetry(telemetry: dict, car_class: str = "hypercar",
         telemetry: Dict com dados médios da(s) última(s) volta(s)
         car_class: Classe normalizada do carro
         level: Nível do piloto ("basic", "intermediate", "advanced")
+        summaries: Lista opcional de LapSummary recentes (usado por B1 e E1)
 
     Returns:
         Lista de sugestões ordenadas por prioridade, filtradas por nível
@@ -306,6 +428,46 @@ def analyze_telemetry(telemetry: dict, car_class: str = "hypercar",
     if config.get("has_regen", False):
         _check_virtual_energy(telemetry, config, suggestions)
 
+    # ============================================================
+    # REGRA 11: FEEDBACK POR FASE DE CURVA (entrada / meio / saída)
+    # Diagnóstico preciso: o problema muda dependendo de ONDE
+    # acontece na curva. Cada fase indica um parâmetro diferente.
+    # ============================================================
+    _check_corner_phase_feedback(telemetry, config, suggestions)
+
+    # ============================================================
+    # REGRA 12: EVOLUÇÃO DA BORRACHA (rubber evolution)
+    # À medida que mais carros rodam, a pista ganha aderência
+    # (borracha depositada). O setup ideal muda: pressões caem,
+    # ARBs podem endurecer, menos wing é necessário.
+    # ============================================================
+    _check_rubber_evolution(telemetry, config, suggestions)
+
+    # ============================================================
+    # REGRA 13: CICLO DIA/NOITE — Variação de temperatura do ar
+    # À noite, o ar fica mais denso (mais frio = maior densidade).
+    # Isso afeta o downforce (mais natural), o resfriamento do motor
+    # e a temperatura dos pneus.
+    # ============================================================
+    _check_day_night_cycle(telemetry, config, suggestions)
+
+    # ============================================================
+    # REGRA 14 (B1): MICRO-SETORES TÉRMICOS — perfil de 20 bins
+    # Se algum setor de 5% da pista está sistematicamente mais quente
+    # que a média, indica frenagem/tração excessiva naquele ponto.
+    # ============================================================
+    if summaries:
+        _check_thermal_micro_sector(summaries[-1:], config, suggestions)
+
+    # ============================================================
+    # REGRA 15 (E1): TENDÊNCIA TÉRMICA — evolução nas últimas 3+ voltas
+    # Se a temperatura do pneu dianteiro esquerdo (FL) aumentou
+    # consistentemente nas últimas 3 voltas (>3°C/volta), o setup
+    # está degradando progressivamente → ajustar antes de blister.
+    # ============================================================
+    if summaries and len(summaries) >= 3:
+        _check_thermal_trend(summaries, config, suggestions)
+
     # Ordenar por prioridade (1 = mais importante)
     suggestions.sort(key=lambda s: s.priority)
 
@@ -319,7 +481,113 @@ def analyze_telemetry(telemetry: dict, car_class: str = "hypercar",
     for s in suggestions:
         s.category = get_param_category(s.param_name)
 
+    # Reordenar pelo perfil de estratégia da classe do carro (G7.1)
+    suggestions = sort_suggestions_by_class(suggestions, car_class)
+
     return suggestions
+
+
+def _check_thermal_micro_sector(
+    summaries: list,
+    config: dict,
+    suggestions: list[HeuristicSuggestion],
+) -> None:
+    """B1: detecta micro-setores (5% de pista) com temperatura outer anormalmente alta.
+
+    Compara cada bin com a média global da volta. Bins >10°C acima da média
+    indicam zona de estresse térmico — sugerir redução de camber ou pressão.
+    """
+    if not summaries:
+        return
+    last = summaries[-1]
+    profile: list[float] = getattr(last, "thermal_profile", [])
+    if not profile or len(profile) < 20:
+        return
+
+    valid_temps = [t for t in profile if t > 0]
+    if not valid_temps:
+        return
+    mean_temp = sum(valid_temps) / len(valid_temps)
+    threshold = mean_temp + 10.0  # 10°C acima da média = zona quente
+
+    hot_zones = [i for i, t in enumerate(profile) if t > threshold]
+    if not hot_zones:
+        return
+
+    # Primeira zona quente → sugerir camber/pressão
+    first_zone_pct = hot_zones[0] * 5  # porcentagem da pista (0-95%)
+    suggestions.append(HeuristicSuggestion(
+        param_name="delta_pressure_f",
+        delta=-1,
+        rule_name="thermal_micro_sector",
+        condition=f"bin_{first_zone_pct}pct > mean+10°C ({threshold:.0f}°C)",
+        explanation=(
+            f"Micro-setor quente detectado (~{first_zone_pct}% da pista): temperatura "
+            f"outer acima de {threshold:.0f}°C. "
+            "Reduzir pressão dianteira para distribuir calor."
+        ),
+        priority=3,
+    ))
+
+
+def _check_thermal_trend(
+    summaries: list,
+    config: dict,
+    suggestions: list[HeuristicSuggestion],
+) -> None:
+    """E1: detecta tendência crescente de temperatura nas últimas 3+ voltas.
+
+    Se a temperatura outer do pneu FL aumentou >3°C/volta consecutivamente,
+    o setup está progredindo para degradação. Agir antes de blister.
+    """
+    # Coletar temperatura outer FL (ice_fl_outer) de cada volta
+    fl_outer_temps: list[float] = []
+    for s in summaries[-3:]:
+        profile: list[float] = getattr(s, "thermal_profile", [])
+        if profile and len(profile) >= 20:
+            # Média do perfil como proxy de temperatura outer FL
+            valid = [t for t in profile if t > 0]
+            if valid:
+                fl_outer_temps.append(sum(valid) / len(valid))
+        else:
+            # Fallback: usar feature index 2 (FL_outer do vetor de features)
+            feats = getattr(s, "features", None)
+            if feats is not None and len(feats) > 2 and feats[2] > 0:
+                fl_outer_temps.append(float(feats[2]))
+
+    if len(fl_outer_temps) < 3:
+        return
+
+    # Verificar tendência crescente (cada volta >3°C acima da anterior)
+    slopes = [fl_outer_temps[i] - fl_outer_temps[i - 1] for i in range(1, len(fl_outer_temps))]
+    avg_slope = sum(slopes) / len(slopes)
+    if avg_slope < 3.0:  # menos de 3°C/volta → não é tendência preocupante
+        return
+
+    # Tendência confirmada — sugerir ajuste preventivo
+    suggestions.append(HeuristicSuggestion(
+        param_name="delta_pressure_f",
+        delta=-1,
+        rule_name="thermal_trend",
+        condition=f"slope={avg_slope:.1f}°C/volta >= 3.0 ({len(fl_outer_temps)} voltas)",
+        explanation=(
+            f"Tendência térmica crescente nas últimas {len(fl_outer_temps)} voltas: "
+            f"+{avg_slope:.1f}°C/volta. "
+            "Reduzir pressão dianteira para prevenir blister."
+        ),
+        priority=2,
+    ))
+    suggestions.append(HeuristicSuggestion(
+        param_name="delta_camber_f",
+        delta=+1,
+        rule_name="thermal_trend_camber",
+        condition=f"slope={avg_slope:.1f}°C/volta >= 3.0",
+        explanation=(
+            "Complementar à tendência térmica: aumentar camber dianteiro levemente "
+            "para distribuir calor entre inner e outer."
+        ),
+        priority=3,
+    ))
 
 
 def _check_camber(tele: dict, config: dict,
@@ -1152,8 +1420,8 @@ def _check_abs_tc(tele: dict, config: dict,
     Cobre: TC Map, TC Power Cut, TC Slip Angle, TC Onboard, ABS.
     """
     car_class = tele.get("car_class", "hypercar")
-    has_abs = config.get("has_abs", car_class != "lmp2")
-    has_tc = config.get("has_tc", car_class != "lmp2")
+    has_abs = config.get("has_abs", False)
+    has_tc = config.get("has_tc", False)
 
     grip_avg = tele.get("grip_avg", 1.0)
     rain = tele.get("raining", 0.0)
@@ -1299,6 +1567,532 @@ def _check_abs_tc(tele: dict, config: dict,
                 ),
                 priority=2,
             ))
+
+
+# ============================================================
+# REGRA 11: DIAGNÓSTICO POR FASE DE CURVA
+# Entrada, meio e saída indicam causas muito diferentes.
+# ============================================================
+
+def _check_corner_phase_feedback(tele: dict, config: dict,
+                                 suggestions: list[HeuristicSuggestion]):
+    """
+    Diagnóstico de comportamento por FASE da curva.
+
+    - Entrada: problema ao frear/girar para dentro
+    - Meio: problema na apex, velocidade mínima
+    - Saída: problema ao acelerar ao sair da curva
+
+    Respeita a classe do carro: LMP2 não tem TC/ABS, portanto
+    as correções eletrônicas não são aplicadas.
+    """
+    bias = tele.get("user_feedback_bias", 0.0)     # -1 understeer, +1 oversteer
+    entry = tele.get("user_feedback_entry", 0.0)   # 0-1 — problema na entrada
+    mid = tele.get("user_feedback_mid", 0.0)       # 0-1 — problema no meio
+    exit_ = tele.get("user_feedback_exit", 0.0)    # 0-1 — problema na saída
+
+    has_abs = config.get("has_abs", False)
+    has_tc = config.get("has_tc", False)
+    is_lmp2 = not has_abs and not has_tc
+
+    # ──────────────────────────────────────────────────────────
+    # UNDERSTEER (bias < -0.3)
+    # ──────────────────────────────────────────────────────────
+    if bias < -0.3:
+        # Entrada de curva: understeer ao frear / girar (push-in)
+        # → Aliviar dianteiro: ARB mais mole, camber mais negativo
+        if entry > 0.5:
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_arb_f",
+                delta=-1,
+                rule_name="entry_understeer_arb",
+                condition=f"bias({bias:.1f}) entry({entry:.1f})",
+                explanation=(
+                    "Understeer na ENTRADA da curva. O dianteiro não girar ao "
+                    "frear indica ARB dianteira dura demais. Amolecer para "
+                    "permitir mais rolagem e melhor aderência na entrada."
+                ),
+                priority=1,
+                category="mechanical",
+            ))
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_camber_f",
+                delta=-1,
+                rule_name="entry_understeer_camber",
+                condition=f"bias({bias:.1f}) entry({entry:.1f})",
+                explanation=(
+                    "Understeer na entrada: aumentar camber negativo dianteiro "
+                    "para melhorar a carga lateral na ponta do pneu ao girar."
+                ),
+                priority=2,
+                category="fine_tune",
+            ))
+            if has_abs:
+                # Com ABS, brake bias mais traseiro alivia dianteiro na freada
+                suggestions.append(HeuristicSuggestion(
+                    param_name="delta_rear_brake_bias",
+                    delta=+1,
+                    rule_name="entry_understeer_bias",
+                    condition=f"bias({bias:.1f}) entry({entry:.1f})",
+                    explanation=(
+                        "Understeer na entrada: mover brake bias ligeiramente "
+                        "para trás reduz a carga de frenagem no eixo dianteiro, "
+                        "permitindo mais grip lateral na entrada."
+                    ),
+                    priority=2,
+                    category="fine_tune",
+                ))
+            else:
+                # LMP2 sem ABS: brake bias é CRÍTICO — mais para trás previne lock
+                suggestions.append(HeuristicSuggestion(
+                    param_name="delta_rear_brake_bias",
+                    delta=+1,
+                    rule_name="entry_understeer_bias_no_abs",
+                    condition=f"LMP2 sem ABS, bias({bias:.1f}) entry({entry:.1f})",
+                    explanation=(
+                        "LMP2 sem ABS — understeer na entrada indica lock-up "
+                        "dianteiro antes da curva. Mover brake bias para trás "
+                        "para reduzir o esforço de frenagem dianteiro: o dianteiro "
+                        "terá mais grip lateral para girar."
+                    ),
+                    priority=1,
+                    category="fine_tune",
+                ))
+
+        # Meio da curva: understeer na apex (push-mid) — carro não gira
+        # → Mola dianteira mais mole, menos ARB dianteiro, asa traseira +1
+        if mid > 0.5:
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_spring_f",
+                delta=-1,
+                rule_name="mid_understeer_spring",
+                condition=f"bias({bias:.1f}) mid({mid:.1f})",
+                explanation=(
+                    "Understeer no MEIO da curva (apex). Mola dianteira dura "
+                    "impede a compressão que aumenta aderência. Amolecer mola "
+                    "dianteira para mais grip mecânico na apex."
+                ),
+                priority=2,
+                category="mechanical",
+            ))
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_rw",
+                delta=+1,
+                rule_name="mid_understeer_wing",
+                condition=f"bias({bias:.1f}) mid({mid:.1f})",
+                explanation=(
+                    "Understeer na apex: mais asa traseira desloca o balanço "
+                    "aerodinâmico para trás, aliviando a carga no dianteiro "
+                    "e melhorando a rotação do carro."
+                ),
+                priority=2,
+                category="aero",
+            ))
+
+        # Saída da curva: understeer ao acelerar (push-exit) — tração travada
+        # → Diferencial mais aberto (menos preload), menos ARB traseiro
+        if exit_ > 0.5:
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_diff_preload",
+                delta=-1,
+                rule_name="exit_understeer_diff",
+                condition=f"bias({bias:.1f}) exit({exit_:.1f})",
+                explanation=(
+                    "Understeer na SAÍDA da curva. Diferencial travado demais "
+                    "força ambas as rodas traseiras a girar na mesma velocidade, "
+                    "impedindo a rotação. Reduzir pré-carga para permitir "
+                    "diferencial de velocidade entre traseira interna e externa."
+                ),
+                priority=1,
+                category="mechanical",
+            ))
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_arb_r",
+                delta=-1,
+                rule_name="exit_understeer_arb_r",
+                condition=f"bias({bias:.1f}) exit({exit_:.1f})",
+                explanation=(
+                    "Understeer na saída: amolecer ARB traseira para permitir "
+                    "mais transferência de peso para a roda interna na curva, "
+                    "melhorando a rotação ao acelerar."
+                ),
+                priority=2,
+                category="mechanical",
+            ))
+            if has_tc:
+                suggestions.append(HeuristicSuggestion(
+                    param_name="delta_tc_map",
+                    delta=-1,
+                    rule_name="exit_understeer_tc",
+                    condition=f"bias({bias:.1f}) exit({exit_:.1f}) com TC",
+                    explanation=(
+                        "Understeer na saída com TC: reduzir TC Map pode revelar "
+                        "se o TC está cortando potência cedo demais, fazendo "
+                        "o carro empurrar em vez de girar. Testar com cautela."
+                    ),
+                    priority=4,
+                    category="electronics",
+                ))
+
+    # ──────────────────────────────────────────────────────────
+    # OVERSTEER (bias > 0.3)
+    # ──────────────────────────────────────────────────────────
+    elif bias > 0.3:
+        # Entrada: oversteer ao frear (rotation / snap-oversteer)
+        # → ARB traseiro mais mole, brake bias mais dianteiro
+        if entry > 0.5:
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_arb_r",
+                delta=-1,
+                rule_name="entry_oversteer_arb",
+                condition=f"bias({bias:.1f}) entry({entry:.1f})",
+                explanation=(
+                    "Oversteer na ENTRADA da curva (snap ao frear). ARB "
+                    "traseira muito dura levanta a roda interna, reduzindo "
+                    "grip. Amolecer ARB traseira para mais estabilidade "
+                    "na frenagem e entrada de curva."
+                ),
+                priority=1,
+                category="mechanical",
+            ))
+            if not is_lmp2:
+                suggestions.append(HeuristicSuggestion(
+                    param_name="delta_rear_brake_bias",
+                    delta=-1,
+                    rule_name="entry_oversteer_bias",
+                    condition=f"bias({bias:.1f}) entry({entry:.1f})",
+                    explanation=(
+                        "Oversteer na entrada: mover brake bias para a frente "
+                        "reduz o esforço de frenagem traseira, diminuindo a "
+                        "tendência de desestabilização traseira na entrada."
+                    ),
+                    priority=2,
+                    category="fine_tune",
+                ))
+            else:
+                # LMP2: brake bias mais dianteiro = CUIDADO com lock dianteiro
+                suggestions.append(HeuristicSuggestion(
+                    param_name="delta_rear_brake_bias",
+                    delta=-1,
+                    rule_name="entry_oversteer_bias_lmp2",
+                    condition=f"LMP2 sem ABS, bias({bias:.1f}) entry({entry:.1f})",
+                    explanation=(
+                        "LMP2 sem ABS — oversteer na entrada indica travamento "
+                        "traseiro. Mover brake bias ligeiramente para frente "
+                        "reduz freio traseiro. ATENÇÃO: pode causar lock dianteiro "
+                        "— ajustar com cautela; 1 passo de cada vez."
+                    ),
+                    priority=1,
+                    category="fine_tune",
+                ))
+
+        # Meio da curva: oversteer na apex
+        # → Mais asa traseira, endurecer mola dianteira (reduz rotação)
+        if mid > 0.5:
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_rw",
+                delta=+1,
+                rule_name="mid_oversteer_wing",
+                condition=f"bias({bias:.1f}) mid({mid:.1f})",
+                explanation=(
+                    "Oversteer na APEX. Aumentar asa traseira aumenta downforce "
+                    "e carga mecânica no eixo traseiro, reduzindo a tendência "
+                    "de escorregamento."
+                ),
+                priority=1,
+                category="aero",
+            ))
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_arb_r",
+                delta=+1,
+                rule_name="mid_oversteer_arb",
+                condition=f"bias({bias:.1f}) mid({mid:.1f})",
+                explanation=(
+                    "Oversteer na apex: endurecer ARB traseira reduz a "
+                    "rolagem traseira, estabilizando o eixo traseiro na curva."
+                ),
+                priority=2,
+                category="mechanical",
+            ))
+
+        # Saída: oversteer ao acelerar (wheelspin + snap)
+        # → Mais preload diferencial, TC mais alto, mola traseira mais dura
+        if exit_ > 0.5:
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_diff_preload",
+                delta=+1,
+                rule_name="exit_oversteer_diff",
+                condition=f"bias({bias:.1f}) exit({exit_:.1f})",
+                explanation=(
+                    "Oversteer na SAÍDA (wheelspin/snap ao acelerar). "
+                    "Aumentar pré-carga do diferencial trava levemente as "
+                    "rodas traseiras juntas, distribuindo torque melhor "
+                    "e reduzindo a tendência de spin individual."
+                ),
+                priority=1,
+                category="mechanical",
+            ))
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_spring_r",
+                delta=+1,
+                rule_name="exit_oversteer_spring",
+                condition=f"bias({bias:.1f}) exit({exit_:.1f})",
+                explanation=(
+                    "Oversteer na saída: endurecer mola traseira reduz "
+                    "a transferência de peso para trás na aceleração, "
+                    "diminuindo a sobrecarga e tendência de spin."
+                ),
+                priority=2,
+                category="mechanical",
+            ))
+            if has_tc:
+                suggestions.append(HeuristicSuggestion(
+                    param_name="delta_tc_map",
+                    delta=+1,
+                    rule_name="exit_oversteer_tc",
+                    condition=f"bias({bias:.1f}) exit({exit_:.1f}) com TC",
+                    explanation=(
+                        "Oversteer na saída com TC: aumentar TC Map "
+                        "para limitar a patinagem traseira ao accelerar."
+                    ),
+                    priority=3,
+                    category="electronics",
+                ))
+
+
+# ============================================================
+# REGRA 12: EVOLUÇÃO DA BORRACHA (rubber build-up)
+# À medida que mais voltas são completadas, a pista deposita
+# borracha na linha, aumentando o grip progressivamente.
+# O setup ideal muda: pressões podem cair, ARBs podem endurecer
+# pois o grip mecânico já não precisa ser maximizado da mesma forma.
+# ============================================================
+
+def _check_rubber_evolution(tele: dict, config: dict,
+                            suggestions: list[HeuristicSuggestion]):
+    """
+    Ajusta o setup para compensar a evolução da borracha na pista.
+
+    Usa dois indicadores:
+    - ``session_lap_count``: voltas completadas na sessão (>15 = pista evoluindo)
+    - ``grip_avg``: grip médio atual (se for alto e climbing, pista está evoluindo)
+    - ``grip_delta``: diferença de grip volta-a-volta (positivo = pista evoluindo)
+    """
+    lap_count = tele.get("session_lap_count", 0)
+    grip_avg = tele.get("grip_avg", 1.0)
+    grip_delta = tele.get("grip_delta", 0.0)  # Melhora de grip por volta
+
+    # Pista ainda "verde" (primeiras 5 voltas) — grip baixo, menos downforce
+    if lap_count < 5 and grip_avg < 0.75:
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_rw",
+            delta=+1,
+            rule_name="green_track_wing",
+            condition=f"lap_count({lap_count}) < 5 e grip({grip_avg:.2f}) < 0.75",
+            explanation=(
+                f"Pista verde (lap={lap_count}, grip={grip_avg:.2f}). "
+                "Pequeno aumento de asa para compensar a baixa aderência "
+                "inicial. À medida que a borracha for depositando, "
+                "pode reduzir de volta."
+            ),
+            priority=4,
+            category="aero",
+        ))
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_f",
+            delta=+1,
+            rule_name="green_track_pressure_f",
+            condition=f"grip({grip_avg:.2f}) < 0.75",
+            explanation=(
+                "Pista verde: pressão ligeiramente mais alta para "
+                "reduzir o tempo de aquecimento dos pneus em pista sem borracha."
+            ),
+            priority=5,
+            category="fine_tune",
+        ))
+
+    # Pista evoluindo rapidamente (borracha subindo) → grip aumentando
+    # Reduzir pressão para aproveitar o grip extra com mais contato
+    elif grip_delta > 0.005 and grip_avg > 0.85:
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_f",
+            delta=-1,
+            rule_name="rubber_grip_increase_pressure_f",
+            condition=f"grip_delta({grip_delta:.4f}) > 0.005 e grip({grip_avg:.2f}) > 0.85",
+            explanation=(
+                f"Pista ganhando borracha rápido (grip +{grip_delta:.3f}/volta). "
+                "Reduzir pressão dianteira para aproveitar o grip crescente "
+                "com maior área de contato."
+            ),
+            priority=4,
+            category="fine_tune",
+        ))
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_r",
+            delta=-1,
+            rule_name="rubber_grip_increase_pressure_r",
+            condition=f"grip_delta({grip_delta:.4f}) > 0.005",
+            explanation="Pista evoluindo: reduzir pressão traseira.",
+            priority=4,
+            category="fine_tune",
+        ))
+
+    # Pista madura (> 30 voltas, grip alto) — pode endurecer ARBs
+    # pois o grip mecânico da pista já compensa
+    if lap_count > 30 and grip_avg > 0.90:
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_arb_f",
+            delta=+1,
+            rule_name="mature_track_arb_f",
+            condition=f"lap_count({lap_count}) > 30 e grip({grip_avg:.2f}) > 0.90",
+            explanation=(
+                f"Pista madura ({lap_count} voltas, grip={grip_avg:.2f}). "
+                "A borracha depositada já oferece bom grip mecânico. "
+                "Endurecer ligeiramente ARB dianteira para ganhar "
+                "responsividade, aproveitando o grip da pista."
+            ),
+            priority=5,
+            category="mechanical",
+        ))
+
+
+# ============================================================
+# REGRA 13: CICLO DIA/NOITE — Densidade do ar e temperatura
+# À noite, temperatura do ar cai → ar fica mais denso → mais
+# downforce natural (asas ficam mais eficientes).
+# Também muda a temperatura de aquecimento dos pneus e
+# a eficiência de refrigeração (mais fácil de resfriar).
+# ============================================================
+
+def _check_day_night_cycle(tele: dict, config: dict,
+                           suggestions: list[HeuristicSuggestion]):
+    """
+    Ajustes baseados na queda de temperatura do ar (ciclo dia/noite).
+
+    Usa:
+    - ``ambient_temp``: temperatura atual do ar (°C)
+    - ``ambient_temp_baseline``: temperatura do ar no início da sessão (°C)
+    - ``is_night``: bool / 0 ou 1 — indicador de período noturno
+
+    Se a temperatura caiu mais de 5°C em relação ao início,
+    o ar está mais denso e as asas são mais eficientes.
+    Nesse cenário, pode-se reduzir levemente a asa traseira
+    sem perder downforce líquido.
+    """
+    ambient = tele.get("ambient_temp", 0.0)
+    baseline = tele.get("ambient_temp_baseline", 0.0)
+    is_night = tele.get("is_night", 0)
+
+    if ambient <= 0:
+        return  # Sem dados
+
+    # Calcular queda de temperatura
+    if baseline > 0:
+        temp_drop = baseline - ambient
+    else:
+        # Sem baseline, inferir pelo período noturno
+        temp_drop = 8.0 if is_night else 0.0
+
+    is_aero_critical = config.get("aero_balance_critical", False)
+
+    # Queda moderada (5–10°C) — ar ~2–4% mais denso → mais downforce natural
+    if 5 <= temp_drop < 10:
+        # Radiador: à noite mais frio → pode fechar um pouco o radiador
+        # (motor já refrigera com menos airflow)
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_radiator",
+            delta=-1,
+            rule_name="night_radiator_close",
+            condition=f"temp_drop({temp_drop:.0f}°C) >= 5°C",
+            explanation=(
+                f"Ar mais frio ({temp_drop:.0f}°C de queda). Temperatura "
+                "do ar já resfria o motor com mais eficiência à noite. "
+                "Fechar ligeiramente o radiador reduz o drag aerodinâmico."
+            ),
+            priority=5,
+            category="aero",
+        ))
+        # Pressão dos pneus: ar frio = pneus demoram mais para aquecer
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_f",
+            delta=+1,
+            rule_name="night_cold_pressure_f",
+            condition=f"temp_drop({temp_drop:.0f}°C) >= 5°C",
+            explanation=(
+                f"Temperatura do ar caiu {temp_drop:.0f}°C. Pneus demoram "
+                "mais para atingir a janela ideal à noite. Aumentar pressão "
+                "levemente para acelerar o aquecimento."
+            ),
+            priority=4,
+            category="fine_tune",
+        ))
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_r",
+            delta=+1,
+            rule_name="night_cold_pressure_r",
+            condition=f"temp_drop({temp_drop:.0f}°C) >= 5°C",
+            explanation="Temperatura noturna: pressão traseira +1 para aquecer mais rápido.",
+            priority=4,
+            category="fine_tune",
+        ))
+
+    # Queda forte (>10°C) — noite fria de verdade
+    elif temp_drop >= 10:
+        # Ar significativamente mais denso → asas geram mais downforce
+        # Para Hypercar/LMP2 (aero_critical), pode reduzir 1 passo de asa
+        if is_aero_critical and config.get("ride_height_sensitivity") == "high":
+            suggestions.append(HeuristicSuggestion(
+                param_name="delta_rw",
+                delta=-1,
+                rule_name="night_cold_wing_reduce",
+                condition=f"temp_drop({temp_drop:.0f}°C) >= 10°C + aero_crítico",
+                explanation=(
+                    f"Temperatura do ar caiu {temp_drop:.0f}°C. Ar muito mais "
+                    "denso gerou mais downforce natural. Para Hypercar/LMP2 "
+                    "aero-sensíveis, reduzir 1 passo de asa traseira mantém "
+                    "o balanço e recupera velocidade em reta."
+                ),
+                priority=4,
+                category="aero",
+            ))
+        # Refrigeração clara de freio melhora à noite → pode fechar brake ducts
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_brake_duct_f",
+            delta=-1,
+            rule_name="night_cold_brake_duct",
+            condition=f"temp_drop({temp_drop:.0f}°C) >= 10°C",
+            explanation=(
+                f"Noite fria (−{temp_drop:.0f}°C). Ar mais frio resfria os "
+                "freios com mais eficiência. Pode reduzir a abertura dos "
+                "dutos de freio dianteiros para menos drag, desde que os "
+                "freios não estejam superaquecendo."
+            ),
+            priority=5,
+            category="aero",
+        ))
+        # Pneus muito frios à noite — pressão mais alta
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_f",
+            delta=+2,
+            rule_name="night_very_cold_pressure_f",
+            condition=f"temp_drop({temp_drop:.0f}°C) >= 10°C",
+            explanation=(
+                f"Grande queda de temperatura ({temp_drop:.0f}°C). Pneus "
+                "podem ter dificuldade para aquecer. Aumentar pressão "
+                "para reduzir o tempo de aquecimento do pneu frio."
+            ),
+            priority=3,
+            category="fine_tune",
+        ))
+        suggestions.append(HeuristicSuggestion(
+            param_name="delta_pressure_r",
+            delta=+2,
+            rule_name="night_very_cold_pressure_r",
+            condition=f"temp_drop({temp_drop:.0f}°C) >= 10°C",
+            explanation="Noite muito fria: pressão traseira +2.",
+            priority=3,
+            category="fine_tune",
+        ))
 
 
 def merge_suggestions(heuristic: list[HeuristicSuggestion],

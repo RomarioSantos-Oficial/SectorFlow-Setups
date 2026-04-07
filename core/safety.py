@@ -39,6 +39,14 @@ DANGEROUS_COMBOS = [
             ("delta_spring_f", "> 2"),
         ],
     },
+    {
+        "name": "Menos asa traseira + mais asa dianteira",
+        "risk": "Sobre-esterço severo em alta velocidade — carro instável e perigoso",
+        "conditions": [
+            ("delta_rw", "< 0"),   # Reduzir asa traseira
+            ("delta_fw", "> 0"),   # E aumentar asa dianteira
+        ],
+    },
 ]
 
 
@@ -219,3 +227,22 @@ def _eval_condition(value: int, condition: str) -> bool:
     if op == ">=":
         return value >= threshold
     return False
+
+
+def validate_dependencies(suggested_deltas: dict) -> tuple[bool, str]:
+    """
+    Verifica conflitos entre deltas usando DANGEROUS_COMBOS.
+
+    Args:
+        suggested_deltas: dict mapeando nome do delta para valor inteiro.
+
+    Returns:
+        (True, "OK") se não há conflito, ou (False, mensagem_de_erro).
+    """
+    for combo in DANGEROUS_COMBOS:
+        if all(
+            _eval_condition(suggested_deltas.get(p, 0), c)
+            for p, c in combo["conditions"]
+        ):
+            return False, f"Conflito: {combo['name']}. Risco: {combo['risk']}"
+    return True, "OK"

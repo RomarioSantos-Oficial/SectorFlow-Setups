@@ -19,17 +19,178 @@ import numpy as np
 
 logger = logging.getLogger("LMU_VE.reward")
 
-# Pesos dos critérios de reward (somam 1.0)
+# ─────────────────────────────────────────────────────
+# Perfis de pista (DNA da pista)
+# main_straight_start/end: fração da volta (0.0–1.0)
+# downforce_priority: Very-Low | Low | Medium-Low | Medium | High
+# ─────────────────────────────────────────────────────
+TRACK_POIS: dict[str, dict] = {
+    "MONZA": {
+        "main_straight_start": 0.88,
+        "main_straight_end": 0.08,
+        "downforce_priority": "Very-Low",
+        "pre_straight_zone_start": 0.82,  # B2: saída da última chicane
+        "pre_straight_zone_end": 0.87,
+    },
+    "FUJI SPEEDWAY": {
+        "main_straight_start": 0.85,
+        "main_straight_end": 0.05,
+        "downforce_priority": "Medium-Low",
+        "pre_straight_zone_start": 0.78,  # B2: saída da última curva antes da reta
+        "pre_straight_zone_end": 0.84,
+    },
+    "LE MANS": {
+        "main_straight_start": 0.92,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Very-Low",
+        "pre_straight_zone_start": 0.86,  # B2: saída da Ford Chicane
+        "pre_straight_zone_end": 0.91,
+    },
+    "SPA-FRANCORCHAMPS": {
+        "main_straight_start": 0.88,
+        "main_straight_end": 0.07,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.83,  # B2: saída da Bus Stop
+        "pre_straight_zone_end": 0.87,
+    },
+    "BAHRAIN INTERNATIONAL CIRCUIT": {
+        "main_straight_start": 0.87,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.81,
+        "pre_straight_zone_end": 0.86,
+    },
+    "INTERLAGOS": {
+        "main_straight_start": 0.90,
+        "main_straight_end": 0.05,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.85,
+        "pre_straight_zone_end": 0.89,
+    },
+    "HUNGARORING": {
+        "main_straight_start": 0.92,
+        "main_straight_end": 0.05,
+        "downforce_priority": "High",
+        "pre_straight_zone_start": 0.87,  # B2: saída da curva 14
+        "pre_straight_zone_end": 0.91,
+    },
+    "IMOLA": {
+        "main_straight_start": 0.88,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.83,
+        "pre_straight_zone_end": 0.87,
+    },
+    "PORTIMAO": {
+        "main_straight_start": 0.85,
+        "main_straight_end": 0.05,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.80,
+        "pre_straight_zone_end": 0.84,
+    },
+    # ── S3-4: Novas pistas LMU ──────────────────────────────────────
+    "SEBRING INTERNATIONAL RACEWAY": {
+        "main_straight_start": 0.88,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.83,
+        "pre_straight_zone_end": 0.87,
+    },
+    "MUGELLO CIRCUIT": {
+        "main_straight_start": 0.90,
+        "main_straight_end": 0.07,
+        "downforce_priority": "Medium-Low",
+        "pre_straight_zone_start": 0.85,
+        "pre_straight_zone_end": 0.89,
+    },
+    "SUZUKA CIRCUIT": {
+        "main_straight_start": 0.88,
+        "main_straight_end": 0.05,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.84,
+        "pre_straight_zone_end": 0.87,
+    },
+    "RED BULL RING": {
+        "main_straight_start": 0.87,
+        "main_straight_end": 0.05,
+        "downforce_priority": "Low",
+        "pre_straight_zone_start": 0.82,
+        "pre_straight_zone_end": 0.86,
+    },
+    "CIRCUIT OF THE AMERICAS": {
+        "main_straight_start": 0.90,
+        "main_straight_end": 0.07,
+        "downforce_priority": "High",
+        "pre_straight_zone_start": 0.86,
+        "pre_straight_zone_end": 0.89,
+    },
+    "WATKINS GLEN INTERNATIONAL": {
+        "main_straight_start": 0.85,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Medium-Low",
+        "pre_straight_zone_start": 0.80,
+        "pre_straight_zone_end": 0.84,
+    },
+    "LUSAIL INTERNATIONAL CIRCUIT": {
+        "main_straight_start": 0.88,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.83,
+        "pre_straight_zone_end": 0.87,
+    },
+    "MISANO WORLD CIRCUIT": {
+        "main_straight_start": 0.89,
+        "main_straight_end": 0.06,
+        "downforce_priority": "Medium",
+        "pre_straight_zone_start": 0.84,
+        "pre_straight_zone_end": 0.88,
+    },
+    "DAYTONA INTERNATIONAL SPEEDWAY": {
+        "main_straight_start": 0.80,
+        "main_straight_end": 0.20,
+        "downforce_priority": "Very-Low",
+        "pre_straight_zone_start": 0.74,
+        "pre_straight_zone_end": 0.79,
+    },
+    "ROAD ATLANTA": {
+        "main_straight_start": 0.86,
+        "main_straight_end": 0.05,
+        "downforce_priority": "Medium-Low",
+        "pre_straight_zone_start": 0.81,
+        "pre_straight_zone_end": 0.85,
+    },
+    "CIRCUIT DE MONACO": {
+        "main_straight_start": 0.90,
+        "main_straight_end": 0.05,
+        "downforce_priority": "High",
+        "pre_straight_zone_start": 0.86,
+        "pre_straight_zone_end": 0.89,
+    },
+}
+
+# Multiplicadores de velocidade por perfil de pista
+_DOWNFORCE_SPEED_MULTIPLIER: dict[str, float] = {
+    "Very-Low": 2.0,    # Monza / Le Mans: penalidade dobrada por perder velocidade
+    "Low": 1.5,
+    "Medium-Low": 1.2,
+    "Medium": 1.0,      # Neutro
+    "High": 0.5,        # Mônaco / Hungaroring: velocidade de reta menos crítica
+}
+
+# Pesos dos critérios de reward (somam 1.0) — 10 critérios
 REWARD_WEIGHTS = {
-    "lap_time": 0.25,          # Redução do tempo de volta
-    "temp_balance": 0.15,      # Uniformidade de temperatura I-M-O dos pneus
+    "lap_time": 0.20,          # Redução do tempo de volta (reduzido de 0.25)
+    "top_speed": 0.13,         # Velocidade na reta principal (novo)
+    "temp_balance": 0.13,      # Uniformidade de temperatura I-M-O dos pneus
     "grip": 0.10,              # Aderência média (grip fraction)
     "consistency": 0.10,       # Desvio padrão dos tempos (menor = melhor)
     "user_satisfaction": 0.10, # Feedback direto do usuário
     "tire_wear": 0.10,         # Desgaste equilibrado entre rodas
-    "sector_improvement": 0.10,# Melhoria por setor (S1, S2, S3)
-    "fuel_efficiency": 0.05,   # Consumo de combustível (menos = melhor)
-    "brake_health": 0.05,      # Freios dentro da faixa saudável
+    "sector_improvement": 0.09,# Melhoria por setor (S1, S2, S3)
+    "fuel_efficiency": 0.03,   # Consumo de combustível (menos = melhor)
+    "brake_health": 0.02,      # Freios dentro da faixa saudável
+    "exit_traction": 0.02,     # B2: tração na saída da última curva pré-reta
+    # TOTAL ≈ 1.02 → normalizado por get_dynamic_weights()
 }
 
 
@@ -48,8 +209,14 @@ def compute_reward(
     sectors_after: list[float] | None = None,
     fuel_per_lap_before: float = 0.0,
     fuel_per_lap_after: float = 0.0,
+    target_avg_fuel: float = 0.0,
+    max_speed_current: float = 0.0,
+    max_speed_best: float = 0.0,
+    track_name: str = "",
     brake_temps_after: dict | None = None,
     brake_temp_max: float = 750.0,
+    exit_traction_before: float = 0.0,  # B2: acel média na zona pré-reta (antes)
+    exit_traction_after: float = 0.0,   # B2: acel média na zona pré-reta (depois)
 ) -> float:
     """
     Calcula o reward composto para um ajuste de setup.
@@ -69,8 +236,15 @@ def compute_reward(
         sectors_after: [S1, S2, S3] tempos de setor depois
         fuel_per_lap_before: Consumo por volta antes (litros)
         fuel_per_lap_after: Consumo por volta depois (litros)
+        target_avg_fuel: Consumo médio histórico da pista/carro (litros); se >0
+                         substitui fuel_per_lap_before como referência
+        max_speed_current: Velocidade máxima na reta principal desta volta (km/h)
+        max_speed_best: Melhor velocidade na reta principal registrada (km/h)
+        track_name: Nome da pista (usado para buscar TRACK_POIS e multiplicador)
         brake_temps_after: Dict com temp máxima de freio por roda
         brake_temp_max: Limite de temperatura de freio saudável (°C)
+        exit_traction_before: Acelerão longitudinal média na zona pré-reta antes
+        exit_traction_after: Acelerão longitudinal média na zona pré-reta depois
 
     Returns:
         Reward entre -1.0 e +1.0
@@ -98,20 +272,51 @@ def compute_reward(
     # 7. REWARD DE MELHORIA POR SETOR (10%)
     rewards["sector_improvement"] = _reward_sectors(sectors_before, sectors_after)
 
-    # 8. REWARD DE EFICIÊNCIA DE COMBUSTÍVEL (5%)
-    rewards["fuel_efficiency"] = _reward_fuel_efficiency(
-        fuel_per_lap_before, fuel_per_lap_after
-    )
+    # 8. REWARD DE EFICIÊNCIA DE COMBUSTÍVEL (3%)
+    # Usa média histórica se disponível; caso contrário, compara setups
+    if target_avg_fuel > 0 and fuel_per_lap_after > 0:
+        rewards["fuel_efficiency"] = _reward_fuel_efficiency(
+            fuel_per_lap_after, target_avg_fuel
+        )
+    elif fuel_per_lap_before > 0:
+        rewards["fuel_efficiency"] = _reward_fuel_efficiency(
+            fuel_per_lap_after, fuel_per_lap_before
+        )
+    else:
+        rewards["fuel_efficiency"] = 0.0
 
-    # 9. REWARD DE SAÚDE DOS FREIOS (5%)
+    # 9. REWARD DE SAÚDE DOS FREIOS (2%)
     rewards["brake_health"] = _reward_brake_health(
         brake_temps_after, brake_temp_max
     )
 
-    # Combinar com pesos
+    # 11. REWARD DE TRAÇÃO PRÉ-RETA (B2, 2%)
+    rewards["exit_traction"] = _reward_exit_traction(
+        exit_traction_before, exit_traction_after
+    )
+
+    # 10. REWARD DE TOP SPEED (13%) — velocidade na reta principal
+    track_name_upper = track_name.upper().strip()
+    track_info = TRACK_POIS.get(track_name_upper, {})
+    # Busca por substring se não achou exato
+    if not track_info:
+        for key in TRACK_POIS:
+            if key in track_name_upper or track_name_upper in key:
+                track_info = TRACK_POIS[key]
+                break
+    df_priority = track_info.get("downforce_priority", "Medium")
+    speed_multiplier = _DOWNFORCE_SPEED_MULTIPLIER.get(df_priority, 1.0)
+    rewards["top_speed"] = _reward_top_speed(
+        max_speed_current, max_speed_best
+    ) * speed_multiplier
+    # Clipar após o multiplicador
+    rewards["top_speed"] = max(-1.0, min(1.0, rewards["top_speed"]))
+
+    # Combinar com pesos — dinâmicos pela pista (C1)
+    active_weights = get_dynamic_weights(track_name)
     total = sum(
-        REWARD_WEIGHTS[key] * rewards.get(key, 0.0)
-        for key in REWARD_WEIGHTS
+        active_weights[key] * rewards.get(key, 0.0)
+        for key in active_weights
     )
 
     # Clipar para [-1, +1]
@@ -299,18 +504,132 @@ def _reward_sectors(sectors_before: list[float] | None,
     return max(-1.0, min(1.0, sector_reward))
 
 
-def _reward_fuel_efficiency(fuel_before: float,
-                            fuel_after: float) -> float:
+def _reward_top_speed(max_speed_current: float,
+                      max_speed_best: float,
+                      threshold_kmh: float = 2.0) -> float:
     """
-    Reward baseado na eficiência de combustível.
-    Menos consumo por volta = melhor (menos arrasto, melhor aero).
+    Recompensa baseada na velocidade máxima na reta principal.
+
+    Se a velocidade cair abaixo do threshold (média de oscilação normal),
+    retorna reward negativo. Ganho de velocidade = reward positivo.
+
+    Escala: perda de 10 km/h ≈ -1.0; ganho de 10 km/h ≈ +1.0.
     """
-    if fuel_before <= 0 or fuel_after <= 0:
+    if max_speed_best <= 0 or max_speed_current <= 0:
         return 0.0
 
-    delta_pct = (fuel_after - fuel_before) / fuel_before
-    # Consumiu menos = bom
-    return max(-1.0, min(1.0, -delta_pct * 10.0))
+    delta_speed = max_speed_current - max_speed_best
+
+    # Variações menores que o threshold são ignoradas (ruído normal)
+    if abs(delta_speed) < threshold_kmh:
+        return 0.0
+
+    reward = delta_speed / 10.0
+    return max(-1.0, min(1.0, reward))
+
+
+def _reward_fuel_efficiency(fuel_consumed: float,
+                            target_avg_consumed: float) -> float:
+    """
+    Reward baseado na eficiência de combustível.
+
+    Compara o consumo da volta atual com a média histórica daquela
+    pista/carro. Consumir menos que a média = reward positivo.
+
+    Multiplicador ×5.0: delta de 20% gera reward de ±1.0.
+    """
+    if target_avg_consumed <= 0 or fuel_consumed <= 0:
+        return 0.0
+
+    # delta_pct negativo = consumiu menos (melhor)
+    delta_pct = (fuel_consumed - target_avg_consumed) / target_avg_consumed
+    # Invertemos: consumir menos = reward positivo
+    return max(-1.0, min(1.0, -delta_pct * 5.0))
+
+
+def get_dynamic_weights(track_name: str = "") -> dict[str, float]:
+    """
+    Retorna REWARD_WEIGHTS ajustados ao perfil da pista.
+
+    Em pistas de baixo downforce (Monza, Le Mans) o peso de top_speed
+    sobe e grip cai. Em pistas de alto downforce (Hungaroring) é o
+    inverso. Para pistas desconhecidas retorna os pesos base.
+
+    Args:
+        track_name: Nome da pista (case-insensitive).
+
+    Returns:
+        Dict de pesos (valores somam 1.00).
+    """
+    track_name_upper = track_name.upper().strip()
+    track_info = TRACK_POIS.get(track_name_upper, {})
+    if not track_info:
+        for key in TRACK_POIS:
+            if key in track_name_upper or track_name_upper in key:
+                track_info = TRACK_POIS[key]
+                break
+
+    priority = track_info.get("downforce_priority", "Medium")
+
+    # Pesos base copiados
+    weights = dict(REWARD_WEIGHTS)
+
+    if priority == "Very-Low":          # Monza / Le Mans
+        weights["top_speed"]          = 0.22   # sobe (mais crítico)
+        weights["temp_balance"]       = 0.11   # cai um pouco
+        weights["grip"]               = 0.07   # menos curvas → grip menos crítico
+        weights["sector_improvement"] = 0.07
+        weights["lap_time"]           = 0.20   # mantém
+        # ajusta restantes para somar 1.0
+        # consistency, user_satisfaction, tire_wear, fuel_efficiency, brake_health = 0.10+0.10+0.10+0.03+0.02 = 0.35 → ok total ≈ 1.00 (0.22+0.11+0.07+0.07+0.20+0.10+0.10+0.10+0.03+0.02=1.02 → corrigir)
+        weights["fuel_efficiency"]    = 0.02
+        weights["brake_health"]       = 0.01
+    elif priority == "Low":
+        weights["top_speed"]          = 0.18
+        weights["grip"]               = 0.08
+    elif priority == "High":            # Hungaroring / Mônaco
+        weights["top_speed"]          = 0.07   # cai (retas curtas)
+        weights["grip"]               = 0.17   # sobe (grip crítico em curvas)
+        weights["sector_improvement"] = 0.12   # cada curva importa mais
+        weights["temp_balance"]       = 0.15   # pneus trabalham mais
+        weights["lap_time"]           = 0.20
+
+    # Normalizar para que a soma seja exatamente 1.00
+    total = sum(weights.values())
+    if abs(total - 1.0) > 0.001:
+        weights = {k: round(v / total, 6) for k, v in weights.items()}
+
+    return weights
+
+
+def classify_setup_efficiency(
+    delta_laptime: float,
+    delta_consumption: float,
+) -> str:
+    """
+    Classifica a eficiência de um ajuste de setup cruzando lap time e consumo.
+
+    Retorna:
+        "EXCELENTE"   — ficou mais rápido E consumiu menos (menos arrasto eficiente)
+        "AGRESSIVO"   — ficou mais rápido MAS consumiu mais (mais asa/potência)
+        "CONSERVADOR" — consumiu menos MAS ficou mais lento (setup de corrida longa)
+        "DESASTROSO"  — ficou mais lento E consumiu mais (arrasto inútil)
+        "NEUTRO"      — variação dentro do ruído normal (< 0.1s e < 0.05L)
+    """
+    fast = delta_laptime < -0.1       # >0.1s mais rápido
+    lean = delta_consumption < -0.05  # >0.05L por volta a menos
+    slow = delta_laptime > 0.1        # >0.1s mais lento
+    heavy = delta_consumption > 0.05  # >0.05L por volta a mais
+
+    if fast and lean:
+        return "EXCELENTE"      # menos arrasto + ganho de tempo
+    if fast and heavy:
+        return "AGRESSIVO"      # mais downforce = mais rápido mas caro
+    if slow and lean:
+        return "CONSERVADOR"    # economiza combustível mas perde tempo
+    if slow and heavy:
+        return "DESASTROSO"     # pior em tudo
+    return "NEUTRO"
 
 
 def _reward_brake_health(brake_temps: dict | None,
@@ -347,3 +666,28 @@ def _reward_brake_health(brake_temps: dict | None,
 
     # Todos dentro da faixa — reward proporcional à margem
     return max(0.0, min(1.0, avg_margin))
+
+
+def _reward_exit_traction(traction_before: float, traction_after: float) -> float:
+    """B2: reward baseado na melhoria da tração na saída da última curva pré-reta.
+
+    Mede a aceleração longitudinal média na zona pre_straight_zone.
+    Valor mais alto (mais tração) após ajuste = reward positivo.
+
+    Args:
+        traction_before: Aceleração média (m/s²) na zona antes do ajuste.
+        traction_after:  Aceleração média (m/s²) na zona depois do ajuste.
+
+    Returns:
+        Reward em [-1.0, +1.0]. 0.0 se dados insuficientes.
+    """
+    if traction_before <= 0 and traction_after <= 0:
+        return 0.0
+
+    # Se só temos o valor depois, recompensa proporcional ao valor absoluto
+    if traction_before <= 0:
+        return max(0.0, min(1.0, traction_after / 10.0))
+
+    delta = traction_after - traction_before
+    # ±2 m/s² de variação mapeado em [-1, +1]
+    return max(-1.0, min(1.0, delta / 2.0))

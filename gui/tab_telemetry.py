@@ -15,6 +15,7 @@ from gui.widgets import (
     Card,
     LabeledValue,
     SectionHeader,
+    ThermalMapWidget,
     TyreWidget,
     COLORS,
 )
@@ -68,6 +69,10 @@ class TelemetryTab(ctk.CTkFrame):
         self.tyre_rl.pack(side="left", padx=8, pady=5, expand=True, fill="x")
         self.tyre_rr = TyreWidget(bot, position=_("rear_right"))
         self.tyre_rr.pack(side="left", padx=8, pady=5, expand=True, fill="x")
+
+        # Mapa térmico (perfil de 20 zonas ao longo da pista)
+        self.thermal_map = ThermalMapWidget(tyre_card)
+        self.thermal_map.pack(fill="x", padx=12, pady=(0, 10))
 
         # ─── Veículo + Aero (lado a lado) ─────────────────
         mid_frame = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -266,6 +271,15 @@ class TelemetryTab(ctk.CTkFrame):
             grip=grip[3] if len(grip) > 3 else -1,
         )
 
+        # Mapa térmico (perfil de pista a partir do engine, se disponível)
+        if hasattr(self.engine, "thermal_profile"):
+            try:
+                profile = self.engine.thermal_profile()
+                if profile:
+                    self.thermal_map.update_profile(profile)
+            except Exception:
+                pass
+
         # Veículo
         self.val_speed.set_value(f"{data.get('speed', 0):.0f}")
         gear = data.get("gear", 0)
@@ -328,6 +342,18 @@ class TelemetryTab(ctk.CTkFrame):
             except Exception:
                 pass
 
+        # Estimativa de voltas restantes com indicador de confiança
+        if hasattr(self.engine, "estimate_laps_remaining"):
+            try:
+                est = self.engine.estimate_laps_remaining()
+                if est.get("laps") is not None:
+                    conf = est.get("confidence", "low")
+                    color = COLORS["accent_green"] if conf == "high" else COLORS["accent_yellow"]
+                    dot = "⬤" if conf == "high" else "◌"
+                    self.val_laps_remaining.set_value(f"{est['laps']:.1f} {dot}", color)
+            except Exception:
+                pass
+
     @staticmethod
     def _fmt(seconds: float) -> str:
         if seconds <= 0 or seconds > 3600:
@@ -367,66 +393,66 @@ class TelemetryTab(ctk.CTkFrame):
 
         # Formatar resultado
         lines = []
-        mode_label = "QUALIFICAÇÃO" if mode == "quali" else "CORRIDA"
-        lines.append(f"🏁 {mode_label} — {duration:.0f} minutos")
-        lines.append(f"   Fonte de dados: {result['data_source']}")
+        mode_label = _("qualification").upper() if mode == "quali" else _("race").upper()
+        lines.append(f"🏁 {mode_label} — {duration:.0f} min")
+        lines.append(f"   {_('strat_data_source')}: {result['data_source']}")
         lines.append("")
 
         if not result["has_data"]:
-            lines.append("⚠️ Sem dados suficientes para estimar.")
-            lines.append("   Complete pelo menos 1 volta para calcular.")
+            lines.append(_("strat_no_data"))
+            lines.append(_("strat_need_laps"))
         else:
             # Estimativas
-            lines.append("📊 Estimativas:")
-            lines.append(f"   Tempo médio de volta: {self._fmt(result['avg_lap_time'])}")
-            lines.append(f"   Voltas estimadas: {result['estimated_laps']}")
+            lines.append(f"{_('strat_estimates')}:")
+            lines.append(f"   {_('strat_avg_lap')}: {self._fmt(result['avg_lap_time'])}")
+            lines.append(f"   {_('strat_laps_est')}: {result['estimated_laps']}")
 
             if result["fuel_per_lap"] > 0:
                 lines.append("")
-                lines.append("⛽ Combustível:")
+                lines.append(f"{_('strat_fuel_section')}:")
                 lines.append(
-                    f"   Consumo/volta: {result['fuel_per_lap']:.2f} L"
+                    f"   {_('strat_consumption')}: {result['fuel_per_lap']:.2f} L"
                     f" (× {fuel_mult:.0f}x = {result['fuel_per_lap_adjusted']:.2f} L)"
                 )
-                lines.append(f"   Total necessário: {result['fuel_total_needed']:.1f} L")
-                lines.append(f"   Recomendado: {result['fuel_recommended']:.1f} L")
+                lines.append(f"   {_('strat_total_needed')}: {result['fuel_total_needed']:.1f} L")
+                lines.append(f"   {_('strat_recommended')}: {result['fuel_recommended']:.1f} L")
                 if result["fuel_capacity"] > 0:
                     lines.append(
-                        f"   Tanque: {result['fuel_capacity']:.0f} L "
+                        f"   {_('strat_tank')}: {result['fuel_capacity']:.0f} L "
                         f"(usando {result['fuel_tank_pct']:.0f}%)"
                     )
-                lines.append(f"   Peso combustível: {result['fuel_weight_kg']:.1f} kg")
+                lines.append(f"   {_('strat_fuel_weight')}: {result['fuel_weight_kg']:.1f} kg")
 
             # Stints
             if result["total_pits"] > 0:
                 lines.append("")
-                lines.append(f"🔧 PIT STOPS: {result['total_pits']} parada(s)")
+                lines.append(f"{_('strat_pit_stops')}: {result['total_pits']} {_('strat_stop_s')}")
                 for stint in result["stints"]:
                     pit = " → PIT" if stint["pit_after"] else " → 🏁"
                     lines.append(
-                        f"   Stint {stint['stint']}: "
+                        f"   {_('strat_stint')} {stint['stint']}: "
                         f"{stint['fuel_load']:.1f} L → "
-                        f"{stint['laps']} voltas{pit}"
+                        f"{stint['laps']} laps{pit}"
                     )
 
             # Desgaste
             if result["wear_per_lap"] > 0:
                 lines.append("")
-                lines.append("🏎 Desgaste de Pneu:")
+                lines.append(f"{_('strat_tire_wear')}:")
                 lines.append(
-                    f"   Por volta: {result['wear_per_lap']:.1f}%"
+                    f"   {_('strat_per_lap')}: {result['wear_per_lap']:.1f}%"
                     f" (× {tire_mult:.0f}x = {result['wear_per_lap_adjusted']:.1f}%)"
                 )
-                lines.append(f"   Total previsto: {result['wear_total_pct']:.1f}%")
+                lines.append(f"   {_('strat_total_wear')}: {result['wear_total_pct']:.1f}%")
                 if result["needs_tire_pit"]:
-                    lines.append("   ⚠️ Trocar pneus no pit!")
+                    lines.append(f"   {_('strat_change_tires')}")
                 else:
-                    lines.append("   ✅ Sem necessidade de troca")
+                    lines.append(f"   {_('strat_no_change')}")
 
             # Deltas recomendados
             if result["deltas"]:
                 lines.append("")
-                lines.append(f"⚙️ Deltas Recomendados ({mode_label}):")
+                lines.append(f"{_('strat_deltas')} ({mode_label}):")
                 for exp in result["delta_explanations"]:
                     lines.append(f"   • {exp}")
 

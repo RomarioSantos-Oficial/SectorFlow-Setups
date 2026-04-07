@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import numpy as np
 import torch
@@ -216,13 +217,16 @@ class Trainer:
         Experience Replay Priorizado.
         Ajusta os pesos dos exemplos por importância:
         - Reward extremo (|r| > 0.5) → peso ×3 (sinal forte)
-        - Dados recentes (últimos 20%) → peso ×2
+        - Dados recentes por timestamp real:
+            ≤ 7 dias → ×2.0  (sessão recente)
+            8-30 dias → ×1.5 (mês corrente)
+            31-90 dias → ×1.0 (referência neutra)
+            > 90 dias → ×0.7 (dados antigos — LMU pode ter sofrido update)
         - Reward ~0 → peso ×0.5 (pouco informativo)
         """
-        n = len(data)
-        recent_cutoff = max(1, int(n * 0.8))  # últimos 20%
+        now = datetime.now(tz=timezone.utc)
 
-        for i, d in enumerate(data):
+        for d in data:
             priority_multiplier = 1.0
             reward = abs(d.get("reward", 0))
 
@@ -232,9 +236,25 @@ class Trainer:
             elif reward < 0.1:
                 priority_multiplier *= 0.5
 
-            # Prioridade por recência
-            if i >= recent_cutoff:
-                priority_multiplier *= 2.0
+            # Prioridade por recência (timestamp real)
+            created_at = d.get("created_at")
+            if created_at:
+                try:
+                    # SQLite retorna ISO string sem timezone
+                    ts = datetime.fromisoformat(str(created_at))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    days_old = max(0, (now - ts).total_seconds() / 86400)
+                    if days_old <= 7:
+                        priority_multiplier *= 2.0
+                    elif days_old <= 30:
+                        priority_multiplier *= 1.5
+                    elif days_old > 90:
+                        priority_multiplier *= 0.7
+                    # 31-90 dias → ×1.0 (neutro)
+                except (ValueError, TypeError):
+                    # Sem timestamp válido → usar posição como fallback
+                    pass
 
             d["weight"] = d.get("weight", 1.0) * priority_multiplier
 
