@@ -1,0 +1,78 @@
+LICENÇA DE USO - SECTOR FLOW SETUPS
+=====================================
+
+Copyright (c) 2024-2026 Romario Santos. Todos os direitos reservados.
+
+CONTRATO DE LICENÇA DE USUÁRIO FINAL (EULA)
+
+Ao instalar ou usar este software, você concorda com os seguintes termos:
+
+1. CONCESSÃO DE LICENÇA
+-----------------------
+Este software é fornecido gratuitamente para uso pessoal e não comercial.
+Você pode:
+  - Instalar o software em qualquer número de computadores pessoais
+  - Usar o software para melhorar seus setups no Le Mans Ultimate
+  - Compartilhar o instalador original com amigos
+
+2. RESTRIÇÕES
+-------------
+Você NÃO pode:
+  - Vender ou redistribuir este software por qualquer forma de compensação
+  - Modificar, descompilar ou fazer engenharia reversa do software
+  - Remover ou alterar avisos de direitos autorais
+  - Usar em competições oficiais onde seja proibido por regulamento
+
+3. ISENÇÃO DE GARANTIA
+----------------------
+ESTE SOFTWARE É FORNECIDO "COMO ESTÁ", SEM GARANTIAS DE QUALQUER TIPO,
+EXPRESSAS OU IMPLÍCITAS. O uso é por sua própria conta e risco.
+
+Os desenvolvedores não garantem que:
+  - O software funcionará sem interrupções ou erros
+  - As sugestões de setup melhorarão seu desempenho no jogo
+  - O software será compatível com todas as versões do Le Mans Ultimate
+
+4. LIMITAÇÃO DE RESPONSABILIDADE
+--------------------------------
+Em nenhuma circunstância os desenvolvedores serão responsáveis por:
+  - Danos diretos, indiretos, acidentais ou consequentes
+  - Perda de dados ou configurações do jogo
+  - Problemas de desempenho no jogo
+
+5. DADOS E PRIVACIDADE
+----------------------
+Este software:
+  - Coleta telemetria apenas do jogo Le Mans Ultimate
+  - Armazena dados localmente no seu computador
+  - Pode usar LLM local (LM Studio) para sugestões - seus dados não são enviados externamente
+  - NÃO coleta informações pessoais
+  - NÃO envia dados para servidores externos sem sua permissão
+
+6. ATUALIZAÇÕES
+---------------
+O software pode receber atualizações que:
+  - Adicionam novas funcionalidades
+  - Corrigem bugs
+  - Melhoram compatibilidade
+
+Você não é obrigado a atualizar, mas recomendamos manter o software atualizado.
+
+7. TERMINAÇÃO
+-------------
+Esta licença é válida até ser terminada. Ela será terminada automaticamente se
+você violar qualquer um dos termos. Ao término, você deve desinstalar o software.
+
+8. LEI APLICÁVEL
+----------------
+Esta licença é regida pelas leis do Brasil.
+
+=====================================
+
+Ao clicar em "Aceito" ou instalar o software, você confirma que leu,
+entendeu e concorda com todos os termos desta licença.
+
+Para suporte: sector.flow.setups@email.com
+Website: https://github.com/sector-flow-setups
+
+Obrigado por usar o Sector Flow Setups!

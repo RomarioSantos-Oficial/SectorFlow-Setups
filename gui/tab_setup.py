@@ -1,0 +1,3013 @@
+"""
+tab_setup.py — Aba unificada de Setup com interface conversacional.
+
+Combina gerenciamento de arquivos .svm, criação de setup,
+e uma interface de chat onde o usuário descreve problemas
+do carro em linguagem natural e recebe sugestões da IA.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox
+import urllib.error
+import urllib.request
+
+import customtkinter as ctk
+
+from gui.widgets import (
+    Card,
+    ChatBubble,
+    ConfidenceBar,
+    DeltaDisplay,
+    SuggestedPhrase,
+    COLORS,
+)
+from gui.i18n import _, I18n
+
+logger = logging.getLogger("SectorFlow.gui.setup")
+
+
+def get_suggested_phrases():
+    """Retorna frases sugeridas no idioma atual."""
+    return [
+        ("🔄", _("phrase_understeer_entry")),
+        ("🔄", _("phrase_oversteer_exit")),
+        ("🔄", _("phrase_slides_mid")),
+        ("🔄", _("phrase_unstable_high")),
+        ("🏎", _("phrase_front_overheat")),
+        ("🏎", _("phrase_rear_cold")),
+        ("🏎", _("phrase_tire_wear")),
+        ("🛑", _("phrase_wheel_lock")),
+        ("🛑", _("phrase_brakes_weak")),
+        ("🛑", _("phrase_brake_pull")),
+        ("⚡", _("phrase_spin_slow")),
+        ("⚡", _("phrase_traction_high")),
+        ("🌧", _("phrase_rain_setup")),
+        ("🌧", _("phrase_drying_track")),
+        ("🎯", _("phrase_more_speed")),
+        ("🎯", _("phrase_kerb_harsh")),
+        ("🎯", _("phrase_stable_setup")),
+        ("⛽", _("phrase_fuel_high")),
+        ("💨", _("phrase_bottoming")),
+        ("💨", _("phrase_wear_fast")),
+    ]
+
+
+# ─── Frases Sugeridas (fallback) ──────────────────────
+
+SUGGESTED_PHRASES = [
+    # Problemas de equilíbrio
+    ("🔄", "O carro está com understeer na entrada da curva"),
+    ("🔄", "O carro está com oversteer na saída da curva"),
+    ("🔄", "O carro escorrega muito no meio da curva"),
+    ("🔄", "O carro está instável em alta velocidade"),
+
+    # Problemas de pneu
+    ("🏎", "Os pneus dianteiros superaquecem rápido"),
+    ("🏎", "Os pneus traseiros não chegam na temperatura"),
+    ("🏎", "O desgaste dos pneus está muito alto"),
+
+    # Problemas de freio
+    ("🛑", "O carro trava as rodas ao frear"),
+    ("🛑", "Os freios não estão parando o carro"),
+    ("🛑", "O carro puxa para um lado ao frear"),
+
+    # Problemas de tração
+    ("⚡", "O carro patina na saída das curvas lentas"),
+    ("⚡", "Perco tração em curvas de alta velocidade"),
+
+    # Clima
+    ("🌧", "Preciso de um setup para chuva"),
+    ("🌧", "A pista está secando, quero ajustar"),
+
+    # Geral
+    ("🎯", "Quero mais velocidade nas retas"),
+    ("🎯", "O carro está muito duro nos meios-fios"),
+    ("🎯", "Quero um setup mais estável e previsível"),
+
+    # Combustível / Energia
+    ("⛽", "Estou gastando muito combustível"),
+    ("💨", "O carro bate no chão (bottoming)"),
+    ("💨", "O desgaste dos pneus está muito rápido"),
+]
+
+# Frases extras por classe de carro
+_CLASS_PHRASES = {
+    "hypercar": [
+        ("⚡", "A bateria está acabando rápido"),
+        ("⚡", "Quero melhorar a gestão de energia"),
+        ("⚡", "O regen está muito agressivo na frenagem"),
+        ("⚡", "Quero mais energia virtual disponível"),
+    ],
+    "lmp2": [
+        ("🎯", "O carro é imprevisível em curvas rápidas"),
+        ("💨", "A direção está pesada e lenta"),
+    ],
+    "lmgt3": [
+        ("🎯", "O carro é imprevisível, não confio nele"),
+        ("💨", "A direção está pesada e lenta"),
+        ("🛑", "O ABS não está ajudado o suficiente"),
+    ],
+}
+
+# Frases extras por tipo de sessão
+_SESSION_PHRASES = {
+    "quali": [
+        ("🏁", "Quero setup agressivo para qualificação"),
+        ("🏁", "Quero maximizar velocidade em 1 volta"),
+    ],
+    "race": [
+        ("🏁", "Quero setup conservador para corrida longa"),
+        ("🏁", "Preciso preservar pneus na corrida"),
+    ],
+}
+
+# Frases extras por clima
+_WEATHER_PHRASES = {
+    "wet": [
+        ("🌧", "A pista está encharcada, preciso de mais dianteira"),
+        ("🌧", "Quero setup mais seguro para chuva forte"),
+    ],
+}
+
+
+class SetupTab(ctk.CTkFrame):
+    """Aba unificada de Setup com chat conversacional."""
+
+    def __init__(self, master, engine=None, **kwargs):
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self.engine = engine
+        self._chat_messages: list[dict] = []
+        self._delta_widgets: dict[str, DeltaDisplay] = {}
+        self._dynamic_section_frame = None
+        self._dynamic_widget_keys: set[str] = set()
+        self._widget_cache: dict[str, DeltaDisplay] = {}
+        self._build_ui()
+        self._show_welcome()
+
+    def _build_ui(self):
+        # Layout principal: lado esquerdo (chat) + lado direito (painel)
+        main = ctk.CTkFrame(self, fg_color="transparent")
+        main.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # ═══ COLUNA ESQUERDA: Chat + Input ═══════════════
+        left = ctk.CTkFrame(main, fg_color="transparent")
+        left.pack(side="left", fill="both", expand=True, padx=(0, 4))
+
+        # Header do chat
+        chat_header = ctk.CTkFrame(left, fg_color=COLORS["bg_card"],
+                                   corner_radius=12, height=50)
+        chat_header.pack(fill="x", pady=(0, 4))
+        chat_header.pack_propagate(False)
+
+        ctk.CTkLabel(
+            chat_header, text=f"🤖 {_('virtual_engineer')}",
+            font=("Arial", 15, "bold"),
+            text_color=COLORS["accent_cyan"],
+        ).pack(side="left", padx=14)
+
+        self._confidence = ConfidenceBar(chat_header)
+        self._confidence.pack(side="right", padx=14, fill="x", expand=True)
+
+        # Área do chat (scrollable)
+        self._chat_scroll = ctk.CTkScrollableFrame(
+            left, fg_color=COLORS["bg_dark"],
+            corner_radius=12,
+            border_width=1, border_color=COLORS["separator"],
+        )
+        self._chat_scroll.pack(fill="both", expand=True, pady=(0, 4))
+
+        # Frases sugeridas (carrossel horizontal scrollable)
+        phrases_frame = ctk.CTkFrame(left, fg_color="transparent")
+        phrases_frame.pack(fill="x", pady=(0, 4))
+
+        ctk.CTkLabel(
+            phrases_frame, text=f"💡 {_('quick_suggestions')}",
+            font=("Arial", 10, "bold"),
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=4, pady=(0, 2))
+
+        self._phrases_scroll = ctk.CTkScrollableFrame(
+            phrases_frame, fg_color="transparent",
+            height=80, orientation="horizontal",
+        )
+        self._phrases_scroll.pack(fill="x")
+
+        for icon, text in get_suggested_phrases():
+            btn = SuggestedPhrase(
+                self._phrases_scroll, text=text, icon=icon,
+                callback=self._on_phrase_click,
+            )
+            btn.pack(side="left", padx=3, pady=2)
+
+        # Input do chat
+        input_frame = ctk.CTkFrame(
+            left, fg_color=COLORS["bg_card"],
+            corner_radius=12, border_width=1,
+            border_color=COLORS["separator"],
+        )
+        input_frame.pack(fill="x")
+
+        self._chat_input = ctk.CTkEntry(
+            input_frame,
+            placeholder_text=_("input_placeholder"),
+            font=("Arial", 12), height=40,
+            fg_color=COLORS["bg_input"],
+            border_width=0, corner_radius=10,
+        )
+        self._chat_input.pack(side="left", fill="x", expand=True, padx=(8, 4), pady=8)
+        self._chat_input.bind("<Return>", self._on_send_message)
+
+        self._btn_send = ctk.CTkButton(
+            input_frame, text="📤", width=40, height=40,
+            fg_color=COLORS["accent_blue"], hover_color="#3588b8",
+            corner_radius=10, font=("Arial", 16),
+            command=lambda: self._on_send_message(None),
+        )
+        self._btn_send.pack(side="right", padx=(0, 8), pady=8)
+
+        # ═══ COLUNA DIREITA: Setup & Sugestões ═══════════
+        right = ctk.CTkScrollableFrame(main, fg_color="transparent", width=340)
+        right.pack(side="right", fill="y", padx=(4, 0), pady=0)
+
+        # ─── Setup Base Atual ─────────────────
+        base_card = Card(right, title=f"📄 {_('setup_base')}")
+        base_card.pack(fill="x", pady=(0, 6))
+
+        self._base_info = ctk.CTkLabel(
+            base_card, text=_("no_setup_loaded"),
+            font=("Arial", 11), text_color=COLORS["text_secondary"],
+            wraplength=290, justify="left",
+        )
+        self._base_info.pack(fill="x", padx=14, pady=(0, 6))
+
+        base_btns = ctk.CTkFrame(base_card, fg_color="transparent")
+        base_btns.pack(fill="x", padx=14, pady=(0, 10))
+
+        ctk.CTkButton(
+            base_btns, text=f"📂 {_('load_svm')}", width=130, height=32,
+            fg_color=COLORS["accent_blue"], hover_color="#3588b8",
+            font=("Arial", 11), command=self._on_load_base,
+        ).pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(
+            base_btns, text=f"👁 {_('view_details')}", width=110, height=32,
+            fg_color=COLORS["accent_purple"], hover_color="#7a3bb8",
+            font=("Arial", 11), command=self._on_view_base,
+        ).pack(side="left", padx=(0, 4))
+
+        self._btn_clear = ctk.CTkButton(
+            base_btns, text="✕", width=32, height=32,
+            fg_color=COLORS["accent_red"], hover_color="#cc3355",
+            font=("Arial", 12), command=self._on_clear_base,
+        )
+        self._btn_clear.pack(side="right")
+
+        # Botão de auto-detecção (linha separada)
+        auto_row = ctk.CTkFrame(base_card, fg_color="transparent")
+        auto_row.pack(fill="x", padx=14, pady=(0, 10))
+
+        ctk.CTkButton(
+            auto_row,
+            text="🎮 Detectar Carro + Gerar Setup",
+            height=32,
+            fg_color="#1a6b3c", hover_color="#145730",
+            font=("Arial", 11, "bold"),
+            command=self._on_auto_detect_generate,
+        ).pack(fill="x")
+
+
+        actions_card = Card(right, title=f"⚡ {_('quick_actions')}")
+        actions_card.pack(fill="x", pady=(0, 6))
+
+        actions_grid = ctk.CTkFrame(actions_card, fg_color="transparent")
+        actions_grid.pack(fill="x", padx=14, pady=(0, 10))
+
+        actions_grid.columnconfigure((0, 1), weight=1)
+        fuel_frame = ctk.CTkFrame(actions_grid, fg_color="transparent")
+        fuel_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        ctk.CTkLabel(fuel_frame, text=_("fuel_liters"), font=("Arial", 11, "bold")).pack(side="left", padx=(0, 5))
+        self._fuel_entry = ctk.CTkEntry(fuel_frame, width=80, font=("Arial", 11))
+        self._fuel_entry.pack(side="left", expand=False)
+        self._fuel_entry.insert(0, "0.0") # Valor inicial
+        self._fuel_entry.bind("<Return>", self._on_fuel_changed)
+        self._fuel_entry.bind("<FocusOut>", self._on_fuel_changed)
+
+
+        ctk.CTkButton(
+            actions_grid, text=f"✨ {_('create_setup')}", height=36,
+            fg_color=COLORS["accent_green"], hover_color="#009955",
+            font=("Arial", 11, "bold"), command=self._on_create_setup,
+        ).grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+
+        ctk.CTkButton(
+            actions_grid, text=f"✏️ {_('edit_setup')}", height=36,
+            fg_color=COLORS["accent_orange"], hover_color="#cc7030",
+            font=("Arial", 11), command=self._on_edit_setup,
+        ).grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+
+        ctk.CTkButton(
+            actions_grid, text=f"🤖 {_('ask_ia')}", height=36,
+            fg_color=COLORS["accent_blue"], hover_color="#3588b8",
+            font=("Arial", 11), command=self._on_request_ai,
+        ).grid(row=1, column=0, padx=2, pady=2, sticky="ew")
+
+        ctk.CTkButton(
+            actions_grid, text=f"📐 {_('use_heuristics')}", height=36,
+            fg_color=COLORS["accent_purple"], hover_color="#7a3bb8",
+            font=("Arial", 11), command=self._on_request_heuristics,
+        ).grid(row=1, column=1, padx=2, pady=2, sticky="ew")
+
+        # ─── Sugestões Atuais ─────────────────
+        sug_card = Card(right, title=f"💡 {_('adjustment_suggestions')}")
+        sug_card.pack(fill="both", expand=True, pady=(0, 6))
+
+        # Scrollable frame para todos os parâmetros
+        self._sug_scroll = ctk.CTkScrollableFrame(
+            sug_card, fg_color="transparent", height=420,
+        )
+        self._sug_scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Todos os parâmetros organizados por categoria e nível IA
+        _PARAM_SECTIONS = [
+            (f"🛩️ {_('aero')}", [
+                ("delta_rw", _("rear_wing")),
+            ], "basic"),
+            (f"🔧 {_('springs')}", [
+                ("delta_spring_f", _("front_spring")),
+                ("delta_spring_r", _("rear_spring")),
+            ], "basic"),
+            (f"📐 {_('camber')}", [
+                ("delta_camber_f", _("front_camber")),
+                ("delta_camber_r", _("rear_camber")),
+            ], "basic"),
+            (f"🎈 {_('tire_pressure')}", [
+                ("delta_pressure_f", _("front_pressure")),
+                ("delta_pressure_r", _("rear_pressure")),
+            ], "basic"),
+            (f"🛑 {_('brakes_section')}", [
+                ("delta_brake_press", _("brake_pressure")),
+                ("delta_rear_brake_bias", _("brake_balance_label")),
+            ], "basic"),
+            (f"🎮 {_('electronics')}", [
+                ("delta_tc_onboard", _("tc_onboard")),
+                ("delta_tc_map", _("tc_map")),
+                ("delta_tc_power_cut", "TC Power Cut"),
+                ("delta_tc_slip_angle", "TC Slip Angle"),
+                ("delta_abs_map", "ABS Map"),
+            ], "basic"),
+            (f"🔄 {_('arb')}", [
+                ("delta_arb_f", _("arb_front")),
+                ("delta_arb_r", _("arb_rear")),
+            ], "intermediate"),
+            (f"🦶 {_('toe_section')}", [
+                ("delta_toe_f", _("toe_front")),
+                ("delta_toe_r", _("toe_rear")),
+            ], "intermediate"),
+            (f"📏 {_('ride_height_section')}", [
+                ("delta_ride_height_f", _("ride_height_front")),
+                ("delta_ride_height_r", _("ride_height_rear")),
+            ], "intermediate"),
+            (f"🔨 {_('dampers_slow')}", [
+                ("delta_slow_bump_f", _("slow_bump_f")),
+                ("delta_slow_bump_r", _("slow_bump_r")),
+                ("delta_slow_rebound_f", _("slow_rebound_f")),
+                ("delta_slow_rebound_r", _("slow_rebound_r")),
+            ], "intermediate"),
+            (f"⚙️ {_('differential')}", [
+                ("delta_diff_preload", _("diff_preload")),
+            ], "intermediate"),
+            (f"🔧 {_('springs_per_wheel')}", [
+                ("delta_spring_fl", f"{_('front_spring')} FL"),
+                ("delta_spring_fr", f"{_('front_spring')} FR"),
+                ("delta_spring_rl", f"{_('rear_spring')} RL"),
+                ("delta_spring_rr", f"{_('rear_spring')} RR"),
+            ], "advanced"),
+            (f"📐 {_('camber_per_wheel')}", [
+                ("delta_camber_fl", f"{_('camber')} FL"),
+                ("delta_camber_fr", f"{_('camber')} FR"),
+                ("delta_camber_rl", f"{_('camber')} RL"),
+                ("delta_camber_rr", f"{_('camber')} RR"),
+            ], "advanced"),
+            (f"🎈 {_('pressure_per_wheel')}", [
+                ("delta_pressure_fl", f"{_('tire_pressure')} FL"),
+                ("delta_pressure_fr", f"{_('tire_pressure')} FR"),
+                ("delta_pressure_rl", f"{_('tire_pressure')} RL"),
+                ("delta_pressure_rr", f"{_('tire_pressure')} RR"),
+            ], "advanced"),
+            (f"📏 {_('ride_height_pw')}", [
+                ("delta_ride_height_fl", f"{_('ride_height_section')} FL"),
+                ("delta_ride_height_fr", f"{_('ride_height_section')} FR"),
+                ("delta_ride_height_rl", f"{_('ride_height_section')} RL"),
+                ("delta_ride_height_rr", f"{_('ride_height_section')} RR"),
+            ], "advanced"),
+            (f"🔨 {_('dampers_fast')}", [
+                ("delta_fast_bump_f", _("fast_bump_f")),
+                ("delta_fast_bump_r", _("fast_bump_r")),
+                ("delta_fast_rebound_f", _("fast_rebound_f")),
+                ("delta_fast_rebound_r", _("fast_rebound_r")),
+            ], "advanced"),
+            (f"🌀 {_('brake_ducts')}", [
+                ("delta_brake_duct_f", _("brake_duct_f")),
+                ("delta_brake_duct_r", _("brake_duct_r")),
+            ], "advanced"),
+            (f"🔥 {_('engine_energy')}", [
+                ("delta_radiator", _("radiator")),
+                ("delta_engine_mix", _("engine_mix")),
+                ("delta_virtual_energy", _("virtual_energy")),
+                ("delta_regen_map", _("regen_map")),
+            ], "advanced"),
+        ]
+
+        _LEVEL_ORDER = {"basic": 0, "intermediate": 1, "advanced": 2}
+        self._section_frames: list[tuple[ctk.CTkFrame, str]] = []
+        self._current_display_level = "advanced"
+        self._manual_deltas: dict[str, int] = {}  # Deltas editados manualmente
+
+        for category, items, level in _PARAM_SECTIONS:
+            sec = ctk.CTkFrame(self._sug_scroll, fg_color="transparent")
+            sec.pack(fill="x")
+
+            ctk.CTkLabel(
+                sec, text=category, font=("Arial", 11, "bold"),
+                text_color=COLORS["accent_cyan"], anchor="w",
+            ).pack(fill="x", padx=8, pady=(6, 1))
+
+            for key, label in items:
+                w = DeltaDisplay(
+                    sec, param_name=label, param_key=key,
+                    on_change=self._on_delta_manual_change,
+                )
+                w.pack(fill="x", padx=12, pady=1)
+                self._delta_widgets[key] = w
+
+            self._section_frames.append((sec, level))
+
+        self._update_param_visibility()
+
+        # Botão aplicar
+        self._btn_apply = ctk.CTkButton(
+            sug_card, text="✅ Aplicar Ajustes", height=36,
+            fg_color=COLORS["accent_green"], hover_color="#009955",
+            font=("Arial", 12, "bold"), state="disabled",
+            command=self._on_apply,
+        )
+        self._btn_apply.pack(fill="x", padx=14, pady=(6, 10))
+
+        # ─── Avaliação ────────────────────────
+        rate_card = Card(right, title="⭐ Avaliar Resultado")
+        rate_card.pack(fill="x", pady=(0, 6))
+
+        rate_row = ctk.CTkFrame(rate_card, fg_color="transparent")
+        rate_row.pack(fill="x", padx=14, pady=(0, 10))
+
+        ctk.CTkButton(
+            rate_row, text="👍 Melhorou", width=90, height=32,
+            fg_color="#28703e", hover_color="#1f5530",
+            font=("Arial", 10),
+            command=lambda: self._on_rate(1.0),
+        ).pack(side="left", padx=2)
+        ctk.CTkButton(
+            rate_row, text="😐 Igual", width=70, height=32,
+            fg_color="#555555", hover_color="#444444",
+            font=("Arial", 10),
+            command=lambda: self._on_rate(0.0),
+        ).pack(side="left", padx=2)
+        ctk.CTkButton(
+            rate_row, text="👎 Piorou", width=90, height=32,
+            fg_color="#703028", hover_color="#551f1a",
+            font=("Arial", 10),
+            command=lambda: self._on_rate(-1.0),
+        ).pack(side="left", padx=2)
+
+        # ─── Avisos ──────────────────────────
+        warn_card = Card(right, title="⚠ Avisos de Segurança")
+        warn_card.pack(fill="x", pady=(0, 6))
+        self._warnings_text = ctk.CTkTextbox(
+            warn_card, height=60, state="disabled",
+            font=("JetBrains Mono", 10),
+            fg_color=COLORS["bg_card"],
+            text_color=COLORS["accent_yellow"],
+        )
+        self._warnings_text.pack(fill="x", padx=12, pady=(0, 10))
+
+        # ─── Auto-Suggest ─────────────────────
+        auto_card = Card(right, title="🤖 IA Autônoma")
+        auto_card.pack(fill="x", pady=(0, 6))
+
+        auto_row1 = ctk.CTkFrame(auto_card, fg_color="transparent")
+        auto_row1.pack(fill="x", padx=14, pady=(0, 4))
+
+        ctk.CTkLabel(
+            auto_row1, text="Sugestão automática:",
+            font=("Arial", 11), text_color=COLORS["text_secondary"],
+        ).pack(side="left")
+
+        self._auto_toggle = ctk.CTkSwitch(
+            auto_row1, text="", width=42,
+            onvalue=1, offvalue=0,
+            command=self._on_toggle_auto_suggest,
+        )
+        self._auto_toggle.select()  # Habilitado por padrão
+        self._auto_toggle.pack(side="right")
+
+        auto_row2 = ctk.CTkFrame(auto_card, fg_color="transparent")
+        auto_row2.pack(fill="x", padx=14, pady=(0, 4))
+
+        ctk.CTkLabel(
+            auto_row2, text="A cada",
+            font=("Arial", 11), text_color=COLORS["text_secondary"],
+        ).pack(side="left")
+
+        self._interval_var = ctk.StringVar(value="3")
+        self._interval_menu = ctk.CTkOptionMenu(
+            auto_row2, values=["2", "3", "5", "10"],
+            variable=self._interval_var, width=60, height=28,
+            fg_color=COLORS["bg_input"],
+            font=("Arial", 11),
+            command=self._on_change_interval,
+        )
+        self._interval_menu.pack(side="left", padx=4)
+
+        ctk.CTkLabel(
+            auto_row2, text="voltas",
+            font=("Arial", 11), text_color=COLORS["text_secondary"],
+        ).pack(side="left")
+
+        # Nível atual da IA
+        auto_row3 = ctk.CTkFrame(auto_card, fg_color="transparent")
+        auto_row3.pack(fill="x", padx=14, pady=(0, 10))
+
+        ctk.CTkLabel(
+            auto_row3, text="Nível IA:",
+            font=("Arial", 11), text_color=COLORS["text_secondary"],
+        ).pack(side="left")
+
+        self._level_label = ctk.CTkLabel(
+            auto_row3, text="BASIC",
+            font=("Arial", 11, "bold"), text_color=COLORS["accent_cyan"],
+        )
+        self._level_label.pack(side="right")
+
+        # ─── Pré-Carga de Conhecimento ────────
+        seed_card = Card(right, title="📚 Base de Conhecimento")
+        seed_card.pack(fill="x", pady=(0, 6))
+
+        self._seed_btn = ctk.CTkButton(
+            seed_card, text="🧠 Carregar conhecimento inicial",
+            fg_color=COLORS.get("accent_green", "#2ecc71"),
+            hover_color="#27ae60",
+            font=("Arial", 12, "bold"),
+            height=34,
+            command=self._on_seed_knowledge,
+        )
+        self._seed_btn.pack(fill="x", padx=14, pady=(4, 4))
+
+        self._learn_setups_btn = ctk.CTkButton(
+            seed_card, text="📂 Aprender de todos os setups",
+            fg_color=COLORS.get("accent_orange", "#e67e22"),
+            hover_color="#d35400",
+            font=("Arial", 11, "bold"),
+            height=32,
+            command=self._on_learn_from_setups,
+        )
+        self._learn_setups_btn.pack(fill="x", padx=14, pady=(0, 4))
+
+        self._stats_btn = ctk.CTkButton(
+            seed_card, text="📊 Ver estatísticas da IA",
+            fg_color=COLORS["bg_input"],
+            hover_color=COLORS.get("bg_card", "#2a2d31"),
+            font=("Arial", 11),
+            height=30,
+            command=self._on_show_stats,
+        )
+        self._stats_btn.pack(fill="x", padx=14, pady=(0, 4))
+
+        self._memory_btn = ctk.CTkButton(
+            seed_card, text="🧠 Ver memória carro×pista",
+            fg_color=COLORS["bg_input"],
+            hover_color=COLORS.get("bg_card", "#2a2d31"),
+            font=("Arial", 11),
+            height=30,
+            command=self._on_show_memory,
+        )
+        self._memory_btn.pack(fill="x", padx=14, pady=(0, 10))
+
+        # ─── API Key (Multi-Provedor LLM) ────────
+        llm_card = Card(right, title="🤖 LLM — Aprendizagem Avançada")
+        llm_card.pack(fill="x", pady=(0, 6))
+
+        # Provedor de API
+        ctk.CTkLabel(
+            llm_card, text="Provedor:",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=14, pady=(4, 0))
+
+        from core.llm_advisor import API_PROVIDERS
+        provider_names = {
+            k: v["name"] for k, v in API_PROVIDERS.items()
+        }
+        initial_provider = "openrouter"
+        if self.engine and hasattr(self.engine, "config"):
+            initial_provider = self.engine.config.get(
+                "llm_provider", "openrouter"
+            )
+
+        self._llm_provider_var = ctk.StringVar(value=initial_provider)
+        self._llm_provider_menu = ctk.CTkOptionMenu(
+            llm_card,
+            values=list(provider_names.keys()),
+            variable=self._llm_provider_var, height=28,
+            fg_color=COLORS["bg_input"],
+            font=("Arial", 10),
+            command=self._on_provider_changed,
+        )
+        self._llm_provider_menu.pack(fill="x", padx=14, pady=(2, 4))
+
+        # URL personalizada (só visível para "custom")
+        self._custom_url_frame = ctk.CTkFrame(
+            llm_card, fg_color="transparent"
+        )
+        ctk.CTkLabel(
+            self._custom_url_frame, text="URL da API:",
+            font=("Arial", 10),
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor="w")
+
+        initial_custom_url = ""
+        if self.engine and hasattr(self.engine, "config"):
+            initial_custom_url = self.engine.config.get(
+                "llm_custom_url", ""
+            )
+
+        self._custom_url_entry = ctk.CTkEntry(
+            self._custom_url_frame,
+            placeholder_text="https://api.exemplo.com/v1/chat/completions",
+            font=("JetBrains Mono", 9),
+            fg_color=COLORS["bg_input"],
+        )
+        self._custom_url_entry.pack(fill="x")
+        self._custom_url_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._normalize_llm_provider_inputs(),
+        )
+        if initial_custom_url:
+            self._custom_url_entry.insert(0, initial_custom_url)
+
+        if initial_provider in ("custom", "lmstudio"):
+            self._custom_url_frame.pack(
+                fill="x", padx=14, pady=(0, 4)
+            )
+            if initial_provider == "lmstudio" and not initial_custom_url:
+                self._custom_url_entry.insert(
+                    0, "http://localhost:1234"
+                )
+
+        # API Key
+        ctk.CTkLabel(
+            llm_card, text="API Key:",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=14, pady=(2, 0))
+
+        api_row = ctk.CTkFrame(llm_card, fg_color="transparent")
+        api_row.pack(fill="x", padx=14, pady=(2, 4))
+
+        initial_key = ""
+        if self.engine and hasattr(self.engine, "config"):
+            initial_key = self.engine.config.get("openrouter_api_key", "")
+
+        self._api_key_entry = ctk.CTkEntry(
+            api_row, placeholder_text="cole sua API key aqui...",
+            font=("JetBrains Mono", 10), show="•",
+            fg_color=COLORS["bg_input"],
+        )
+        self._api_key_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self._api_key_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._normalize_llm_provider_inputs(),
+        )
+        if initial_key:
+            self._api_key_entry.insert(0, initial_key)
+
+        self._api_show_btn = ctk.CTkButton(
+            api_row, text="👁", width=30, height=28,
+            fg_color=COLORS["bg_input"],
+            command=self._toggle_api_key_visibility,
+        )
+        self._api_show_btn.pack(side="right")
+
+        # Modelo LLM
+        ctk.CTkLabel(
+            llm_card, text="Modelo:",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=14, pady=(2, 0))
+
+        initial_model = "deepseek/deepseek-chat-v3-0324"
+        if self.engine and hasattr(self.engine, "config"):
+            initial_model = self.engine.config.get(
+                "openrouter_model", initial_model
+            )
+
+        # Pegar modelos do provedor selecionado
+        prov_info = API_PROVIDERS.get(
+            initial_provider, API_PROVIDERS["openrouter"]
+        )
+        prov_models = prov_info["models"] or [initial_model]
+
+        self._llm_model_var = ctk.StringVar(value=initial_model)
+        self._llm_model_menu = ctk.CTkOptionMenu(
+            llm_card,
+            values=prov_models if prov_models else [initial_model],
+            variable=self._llm_model_var, height=28,
+            fg_color=COLORS["bg_input"],
+            font=("Arial", 10),
+        )
+        self._llm_model_menu.pack(fill="x", padx=14, pady=(2, 4))
+
+        # Campo de modelo custom (para providers com lista vazia ou custom)
+        self._custom_model_frame = ctk.CTkFrame(
+            llm_card, fg_color="transparent"
+        )
+        ctk.CTkLabel(
+            self._custom_model_frame, text="Nome do modelo:",
+            font=("Arial", 10),
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor="w")
+        self._custom_model_entry = ctk.CTkEntry(
+            self._custom_model_frame,
+            placeholder_text="ex: gpt-4o-mini",
+            font=("JetBrains Mono", 9),
+            fg_color=COLORS["bg_input"],
+        )
+        self._custom_model_entry.pack(fill="x")
+        if (
+            initial_provider in ("custom", "lmstudio")
+            and initial_model
+            and not initial_model.startswith("(")
+        ):
+            self._custom_model_entry.insert(0, initial_model)
+        if initial_provider in ("custom", "lmstudio"):
+            self._custom_model_frame.pack(
+                fill="x", padx=14, pady=(0, 4)
+            )
+
+        btn_row_llm = ctk.CTkFrame(llm_card, fg_color="transparent")
+        btn_row_llm.pack(fill="x", padx=14, pady=(0, 4))
+
+        ctk.CTkButton(
+            btn_row_llm, text="💾 Salvar", height=28,
+            fg_color=COLORS["accent_green"], hover_color="#009955",
+            font=("Arial", 11, "bold"),
+            command=self._on_save_api_key,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        ctk.CTkButton(
+            btn_row_llm, text="🔌 Testar", height=28,
+            fg_color=COLORS["accent_blue"], hover_color="#3588b8",
+            font=("Arial", 11),
+            command=self._on_test_api,
+        ).pack(side="right", fill="x", expand=True)
+
+        # Status do LLM
+        self._llm_status = ctk.CTkLabel(
+            llm_card, text="⚪ Não configurado",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        )
+        self._llm_status.pack(anchor="w", padx=14, pady=(0, 4))
+
+        # Checkbox: auto-consultar LLM a cada volta
+        self._llm_auto_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            llm_card,
+            text="🔄 Auto-analisar telemetria com LLM",
+            variable=self._llm_auto_var,
+            font=("Arial", 10),
+        ).pack(anchor="w", padx=14, pady=(0, 10))
+
+        # Atualizar status inicial
+        if initial_key or initial_provider == "lmstudio":
+            self._llm_status.configure(
+                text="🟢 API configurada",
+                text_color=COLORS["accent_green"],
+            )
+
+        # ═══════════════════════════════════════════
+        # Card: Autonomia da IA (Destilação)
+        # ═══════════════════════════════════════════
+        autonomy_card = Card(
+            right,
+            title="🎓 Autonomia da IA",
+        )
+        autonomy_card.pack(
+            fill="x", padx=6, pady=(0, 6),
+        )
+
+        # Barra de progresso de autonomia
+        ctk.CTkLabel(
+            autonomy_card,
+            text="Progresso para IA autônoma:",
+            font=("Arial", 10),
+            text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=14, pady=(4, 0))
+
+        self._autonomy_bar = ctk.CTkProgressBar(
+            autonomy_card,
+            height=14,
+            corner_radius=4,
+        )
+        self._autonomy_bar.pack(
+            fill="x", padx=14, pady=(2, 0),
+        )
+        self._autonomy_bar.set(0)
+
+        self._autonomy_label = ctk.CTkLabel(
+            autonomy_card,
+            text="⚪ Destilação não iniciada",
+            font=("Arial", 10),
+            text_color=COLORS["text_secondary"],
+        )
+        self._autonomy_label.pack(
+            anchor="w", padx=14, pady=(2, 0),
+        )
+
+        # Status de destilação (atualizado durante processo)
+        self._distill_status = ctk.CTkLabel(
+            autonomy_card,
+            text="",
+            font=("Arial", 9),
+            text_color=COLORS["text_secondary"],
+        )
+        self._distill_status.pack(
+            anchor="w", padx=14, pady=(0, 2),
+        )
+
+        # Botão de destilação
+        self._distill_btn = ctk.CTkButton(
+            autonomy_card,
+            text="🧠 Destilar Conhecimento do LLM",
+            height=28,
+            fg_color=COLORS["accent_blue"],
+            hover_color="#3588b8",
+            font=("Arial", 11, "bold"),
+            command=self._on_start_distillation,
+        )
+        self._distill_btn.pack(
+            fill="x", padx=14, pady=(4, 10),
+        )
+
+        # Carregar status de autonomia salvo
+        self._update_autonomy_display()
+
+    # ─── Chat: Mensagens ────────────────────────────────
+
+    def _show_welcome(self):
+        """Mostra mensagem de boas-vindas no chat."""
+        self._add_message(
+            f"{_('welcome_message')}\n\n"
+            f"{_('welcome_description')}\n\n"
+            f"{_('welcome_step1')}\n"
+            f"{_('welcome_step2')}\n"
+            f"{_('welcome_step3')}\n\n"
+            f"{_('welcome_start')}",
+            sender="ai",
+        )
+
+    def update_phrases(self, car_class: str = "",
+                       session_type: str = "", weather: str = ""):
+        """Atualiza frases sugeridas com base no contexto atual."""
+        # Limpar frases existentes
+        for w in self._phrases_scroll.winfo_children():
+            w.destroy()
+
+        # Frases base
+        phrases = list(SUGGESTED_PHRASES)
+
+        # Adicionar frases por classe de carro
+        car_class_lower = car_class.lower() if car_class else ""
+        if car_class_lower in _CLASS_PHRASES:
+            phrases.extend(_CLASS_PHRASES[car_class_lower])
+
+        # Adicionar frases por tipo de sessão
+        session_lower = session_type.lower() if session_type else ""
+        if session_lower in _SESSION_PHRASES:
+            phrases.extend(_SESSION_PHRASES[session_lower])
+
+        # Adicionar frases por clima
+        weather_lower = weather.lower() if weather else ""
+        if weather_lower in _WEATHER_PHRASES:
+            phrases.extend(_WEATHER_PHRASES[weather_lower])
+
+        for icon, text in phrases:
+            btn = SuggestedPhrase(
+                self._phrases_scroll, text=text, icon=icon,
+                callback=self._on_phrase_click,
+            )
+            btn.pack(side="left", padx=3, pady=2)
+
+    def add_message(self, text: str, sender: str = "system"):
+        """Adiciona uma mensagem ao chat (API pública)."""
+        now = datetime.now().strftime("%H:%M")
+        msg = {"text": text, "sender": sender, "time": now}
+        self._chat_messages.append(msg)
+
+        bubble = ChatBubble(
+            self._chat_scroll, message=text,
+            sender=sender, timestamp=now,
+        )
+        bubble.pack(fill="x", padx=4, pady=2)
+
+        # Auto-scroll para o fim
+        self._chat_scroll.after(50, lambda: self._chat_scroll._parent_canvas.yview_moveto(1.0))
+
+    # Alias interno para compatibilidade
+    _add_message = add_message
+
+    def _on_phrase_click(self, text: str):
+        """Processa clique em frase sugerida de forma não-bloqueante."""
+        # Usar after() para não bloquear o evento de click
+        def _process():
+            try:
+                self._chat_input.delete(0, "end")
+                self._chat_input.insert(0, text)
+                self._on_send_message(None)
+            except Exception as e:
+                logger.debug("Erro ao processar frase sugerida: %s", e)
+        self.after(10, _process)
+
+    def _parse_direct_delta_command(self, text: str) -> dict | None:
+        """
+        Detecta comandos diretos de ajuste no texto do usuário.
+        Ex: "tração +2", "TC power cut -1", "asa traseira +3", "abs +1"
+        Retorna dict {delta_name: int_value} ou None.
+        """
+        import re
+        text_lower = text.lower().strip()
+
+        # Mapeamento de palavras-chave → delta_name
+        _KEYWORD_MAP = {
+            # Aerodinâmica
+            "asa": "delta_rw", "asa traseira": "delta_rw",
+            "rw": "delta_rw", "rear wing": "delta_rw",
+            # Molas
+            "mola dianteira": "delta_spring_f", "mola d": "delta_spring_f",
+            "mola traseira": "delta_spring_r", "mola t": "delta_spring_r",
+            "mola": "delta_spring_f",
+            # Camber
+            "camber d": "delta_camber_f", "camber dianteiro": "delta_camber_f",
+            "camber t": "delta_camber_r", "camber traseiro": "delta_camber_r",
+            "camber": "delta_camber_f",
+            # Pressão
+            "pressão d": "delta_pressure_f", "pressao d": "delta_pressure_f",
+            "pressão t": "delta_pressure_r", "pressao t": "delta_pressure_r",
+            "pressão": "delta_pressure_f", "pressao": "delta_pressure_f",
+            # Freios
+            "freio": "delta_brake_press", "brake": "delta_brake_press",
+            "brake bias": "delta_rear_brake_bias",
+            "balanço freio": "delta_rear_brake_bias",
+            "balanco freio": "delta_rear_brake_bias",
+            # TC / ABS
+            "tc onboard": "delta_tc_onboard",
+            "tc map": "delta_tc_map", "tc mapa": "delta_tc_map",
+            "tc power cut": "delta_tc_power_cut",
+            "tc power": "delta_tc_power_cut",
+            "tc slip angle": "delta_tc_slip_angle",
+            "tc slip": "delta_tc_slip_angle",
+            "tração": "delta_tc_map", "tracao": "delta_tc_map",
+            "traction": "delta_tc_map",
+            "tc": "delta_tc_map",
+            "abs": "delta_abs_map", "abs map": "delta_abs_map",
+            # ARB
+            "arb d": "delta_arb_f", "arb t": "delta_arb_r",
+            "anti rolagem d": "delta_arb_f", "anti rolagem t": "delta_arb_r",
+            # Ride Height
+            "ride height d": "delta_ride_height_f",
+            "ride height t": "delta_ride_height_r",
+            "altura d": "delta_ride_height_f",
+            "altura t": "delta_ride_height_r",
+            # Diferencial
+            "diferencial": "delta_diff_preload", "diff": "delta_diff_preload",
+        }
+
+        # Tentar encontrar padrão: <keyword> <+/- número>
+        # Ordenar keywords por tamanho desc para match mais específico primeiro
+        sorted_keys = sorted(_KEYWORD_MAP.keys(), key=len, reverse=True)
+
+        deltas = {}
+        for keyword in sorted_keys:
+            pattern = re.compile(
+                rf'\b{re.escape(keyword)}\b\s*([+-]?\s*\d+)', re.IGNORECASE
+            )
+            m = pattern.search(text_lower)
+            if m:
+                delta_name = _KEYWORD_MAP[keyword]
+                if delta_name not in deltas:  # Primeiro match vence
+                    val_str = m.group(1).replace(" ", "")
+                    try:
+                        deltas[delta_name] = int(val_str)
+                    except ValueError:
+                        continue
+
+        # Fallback: padrão genérico "aumentar/diminuir <keyword>"
+        if not deltas:
+            inc_words = ("aumentar", "subir", "mais", "increase", "up")
+            dec_words = ("diminuir", "baixar", "menos", "decrease", "down",
+                         "reduzir")
+            direction = 0
+            for w in inc_words:
+                if w in text_lower:
+                    direction = 1
+                    break
+            if not direction:
+                for w in dec_words:
+                    if w in text_lower:
+                        direction = -1
+                        break
+
+            if direction:
+                for keyword in sorted_keys:
+                    if keyword in text_lower:
+                        delta_name = _KEYWORD_MAP[keyword]
+                        if delta_name not in deltas:
+                            deltas[delta_name] = direction
+                        break  # Apenas o primeiro match
+
+        return deltas if deltas else None
+
+    def _on_send_message(self, event):
+        """Envia mensagem do usuário e processa."""
+        text = self._chat_input.get().strip()
+        if not text:
+            return
+
+        self._chat_input.delete(0, "end")
+        self._add_message(text, sender="user")
+
+        # Processar a mensagem
+        self._process_user_message(text)
+
+    def _process_user_message(self, text: str):
+        """Analisa a mensagem do usuário e gera resposta + sugestões."""
+        text_lower = text.lower()
+
+        # ── Detecção de comando direto de ajuste ──
+        direct_deltas = self._parse_direct_delta_command(text)
+        if direct_deltas:
+            # Mostrar deltas imediatamente no painel
+            names = ", ".join(
+                f"{k.replace('delta_', '')}: {'+' if v > 0 else ''}{v}"
+                for k, v in direct_deltas.items()
+            )
+            self._add_message(
+                f"✅ Ajuste direto aplicado na sugestão: {names}",
+                sender="ai",
+            )
+            self.display_suggestions(
+                direct_deltas, ["💬 Ajuste direto via chat"],
+            )
+
+        # Mapear palavras-chave para feedback da IA
+        feedback = self._extract_feedback(text_lower)
+
+        if not self.engine:
+            self._add_message(
+                "⚠️ Engine não conectada. Conecte-se ao LMU primeiro.",
+                sender="system",
+            )
+            return
+
+        # Verificar se tem setup base
+        has_base = (hasattr(self.engine, "get_base_setup")
+                    and self.engine.get_base_setup())
+
+        # Tentar enviar feedback extraído
+        if feedback and hasattr(self.engine, "telemetry"):
+            try:
+                self.engine.telemetry.set_user_feedback(
+                    bias=feedback.get("bias", 0),
+                    entry=feedback.get("entry", 0),
+                    mid=feedback.get("mid", 0),
+                    exit_=feedback.get("exit", 0),
+                    confidence=feedback.get("confidence", 0.7),
+                )
+            except Exception:
+                pass
+
+        # Tentar usar LLM se disponível
+        llm = getattr(self.engine, "llm_advisor", None)
+        if llm and llm.enabled:
+            self._add_message(_("msg_consulting_ai"), sender="system")
+            telemetry_ctx = self._get_telemetry_context()
+            car_class = getattr(self.engine, "_car_class", None) or "hypercar"
+
+            # Timeout visual: avisar se demorar mais de 12s
+            self._llm_timeout_id = self.after(
+                12000, self._show_llm_timeout_notice,
+            )
+
+            def _on_llm_response(response_text: str):
+                # Callback executado em thread — usar after() para thread-safety
+                self.after(10, self._handle_llm_response, response_text,
+                           feedback, has_base)
+
+            llm.chat(
+                text, telemetry_context=telemetry_ctx,
+                car_class=car_class, callback=_on_llm_response,
+            )
+        else:
+            # Fallback: respostas locais (sem LLM)
+            response = self._generate_response(text_lower, feedback, has_base)
+            self._add_message(response, sender="ai")
+
+        # Se possível, gerar sugestões
+        if has_base and feedback:
+            self._auto_suggest(feedback)
+
+    def _show_llm_timeout_notice(self):
+        """Mostra aviso se a consulta LLM demorar demais."""
+        self._add_message(
+            "⏳ A IA ainda está processando... "
+            "Pode demorar até 30s na primeira consulta.",
+            sender="system",
+        )
+
+    def _handle_llm_response(self, response_text: str, feedback: dict,
+                              has_base: bool):
+        """Processa resposta do LLM na thread principal do Tk."""
+        try:
+            # Cancelar timeout visual
+            if hasattr(self, '_llm_timeout_id') and self._llm_timeout_id:
+                self.after_cancel(self._llm_timeout_id)
+                self._llm_timeout_id = None
+
+            # Remover mensagens de "Consultando IA..." e timeout
+            children = self._chat_scroll.winfo_children()
+            for child in reversed(children):
+                msg = getattr(child, 'message_text', '')
+                if msg and ("Consultando IA" in msg or "ainda está processando" in msg):
+                    child.destroy()
+
+            self._add_message(response_text, sender="ai")
+
+            # ── Aprendizagem via chat ──
+            # Tentar extrair ajustes JSON da resposta do LLM para
+            # alimentar a rede neural (mesmo fora de pilotagem)
+            chat_deltas = self._try_learn_from_chat(response_text, feedback)
+
+            # ── Mostrar ajustes do LLM no painel de sugestões ──
+            if chat_deltas:
+                self.display_suggestions(
+                    chat_deltas, ["💬 Sugestão via chat (LLM)"]
+                )
+
+        except Exception as e:
+            self._add_message(
+                f"⚠️ Erro ao exibir resposta: {e}", sender="system",
+            )
+
+    def _try_learn_from_chat(self, response_text: str,
+                             feedback: dict) -> dict | None:
+        """
+        Tenta extrair insights da resposta do LLM no chat e salvar
+        como dado de treinamento para a rede neural aprender.
+        Retorna dict de deltas extraídos ou None.
+        """
+        if not self.engine:
+            return None
+        try:
+            import json
+            # Tentar parsear JSON da resposta (o LLM pode responder
+            # com ajustes mesmo em modo chat)
+            json_str = None
+            if "```json" in response_text:
+                start = response_text.index("```json") + 7
+                end = response_text.index("```", start)
+                json_str = response_text[start:end].strip()
+            elif '"adjustments"' in response_text and "{" in response_text:
+                start = response_text.index("{")
+                end = response_text.rindex("}") + 1
+                json_str = response_text[start:end]
+
+            if not json_str:
+                return None
+
+            data = json.loads(json_str)
+            adjustments = data.get("adjustments", {})
+            confidence = float(data.get("confidence", 0.5))
+
+            if not adjustments or confidence < 0.4:
+                return None
+
+            # Pedir ao engine para aprender com esses ajustes
+            if hasattr(self.engine, '_learn_from_llm_chat'):
+                self.engine._learn_from_llm_chat(adjustments, confidence, feedback)
+
+            # Converter adjustments para formato de deltas {delta_name: int}
+            deltas = {}
+            for key, val in adjustments.items():
+                delta_key = key if key.startswith("delta_") else f"delta_{key}"
+                try:
+                    deltas[delta_key] = int(round(float(val)))
+                except (ValueError, TypeError):
+                    continue
+            return deltas if deltas else None
+
+        except (json.JSONDecodeError, ValueError, KeyError):
+            return None  # Resposta não contém JSON — ok, era texto livre
+        except Exception:
+            return None
+
+    def _get_telemetry_context(self) -> dict | None:
+        """Coleta contexto de telemetria para enviar ao LLM."""
+        if not self.engine:
+            return None
+        ctx = {}
+        try:
+            if hasattr(self.engine, "car_name"):
+                ctx["car_name"] = self.engine.car_name
+            if hasattr(self.engine, "track_name"):
+                ctx["track_name"] = self.engine.track_name
+            if hasattr(self.engine, "telemetry") and self.engine.telemetry:
+                tele = self.engine.telemetry
+                if hasattr(tele, "last_summary") and tele.last_summary:
+                    s = tele.last_summary
+                    ctx["grip_avg"] = getattr(s, "grip_avg", None)
+                    ctx["last_lap_time"] = getattr(s, "lap_time", None)
+                    ctx["temp_front"] = getattr(s, "temp_avg_front", None)
+                    ctx["temp_rear"] = getattr(s, "temp_avg_rear", None)
+                    ctx["rain"] = getattr(s, "rain", 0)
+                    ctx["session_type"] = getattr(s, "session_type", "practice")
+        except Exception:
+            pass
+        return ctx if ctx else None
+
+    def _extract_feedback(self, text: str) -> dict:
+        """Extrai informações de feedback do texto do usuário."""
+        feedback = {"bias": 0.0, "entry": 0, "mid": 0, "exit": 0,
+                    "confidence": 0.7}
+
+        # Understeer / Oversteer
+        if any(w in text for w in ("understeer", "subesterçar", "subesterça",
+                                    "não vira", "empurra", "arrasta dianteira")):
+            feedback["bias"] = -0.7
+        elif any(w in text for w in ("oversteer", "sobreesterçar", "sobreesterça",
+                                      "traseira sai", "roda", "escorrega traseira",
+                                      "sai de traseira")):
+            feedback["bias"] = 0.7
+
+        # Zonas da curva
+        if any(w in text for w in ("entrada", "frenagem", "freada", "freiar",
+                                    "antes da curva")):
+            feedback["entry"] = 1
+        if any(w in text for w in ("meio", "ápice", "durante")):
+            feedback["mid"] = 1
+        if any(w in text for w in ("saída", "aceleração", "acelerando",
+                                    "saindo")):
+            feedback["exit"] = 1
+
+        # Se nenhuma zona especificada, marcar "mid" como padrão
+        if not any([feedback["entry"], feedback["mid"], feedback["exit"]]):
+            feedback["mid"] = 1
+
+        # Pneus
+        if any(w in text for w in ("pneu", "pneus", "borracha", "desgaste",
+                                    "temperatura", "superaquec", "frio")):
+            feedback["confidence"] = 0.8
+
+        # Freios
+        if any(w in text for w in ("freio", "freia", "trava", "travar",
+                                    "bloqueio")):
+            feedback["confidence"] = 0.8
+
+        # Tração
+        if any(w in text for w in ("patina", "tração", "aderência",
+                                    "grip", "escorreg")):
+            feedback["confidence"] = 0.8
+
+        # Clima
+        if any(w in text for w in ("chuva", "molhad", "seco", "secando")):
+            feedback["confidence"] = 0.6
+
+        # Combustível / Energia
+        if any(w in text for w in ("combustível", "combustivel", "gasolina",
+                                    "fuel", "gastando", "consumo")):
+            feedback["fuel_issue"] = True
+            feedback["confidence"] = 0.7
+
+        if any(w in text for w in ("bateria", "energia", "regen",
+                                    "híbrido", "hibrido", "deploy")):
+            feedback["energy_issue"] = True
+            feedback["confidence"] = 0.7
+
+        # Bottoming / rigidez
+        if any(w in text for w in ("bottoming", "chão", "bate no chão",
+                                    "raspando")):
+            feedback["bottoming"] = True
+            feedback["confidence"] = 0.8
+
+        # Imprevisibilidade / confiança
+        if any(w in text for w in ("imprevisível", "imprevisivel", "não confio",
+                                    "inseguro", "confiar")):
+            feedback["unpredictable"] = True
+            feedback["confidence"] = 0.7
+
+        # Direção pesada/lenta
+        if any(w in text for w in ("direção pesada", "direção lenta",
+                                    "direcao pesada", "volante pesado")):
+            feedback["heavy_steering"] = True
+            feedback["confidence"] = 0.7
+
+        # Desgaste
+        if any(w in text for w in ("desgaste rápido", "desgaste rapido",
+                                    "pneu acabando", "pneu gastando")):
+            feedback["tire_wear_high"] = True
+            feedback["confidence"] = 0.8
+
+        return feedback
+
+    def _generate_response(self, text: str, feedback: dict,
+                           has_base: bool) -> str:
+        """Gera resposta contextual baseada no texto do usuário."""
+        if not has_base:
+            return (
+                "📂 Você ainda não carregou um setup base.\n\n"
+                "Por favor, clique em 'Carregar .svm' no painel à direita "
+                "para selecionar seu arquivo de setup. Depois disso, posso "
+                "sugerir ajustes específicos."
+            )
+
+        parts = []
+
+        # Diagnóstico baseado no input
+        if feedback["bias"] < -0.3:
+            parts.append(
+                "📋 **Diagnóstico**: Understeer detectado.\n"
+                "O carro não responde bem à direção. Vou sugerir:\n"
+                "• Reduzir asa dianteira ou aumentar traseira\n"
+                "• Amaciar molas/ARB dianteiras\n"
+                "• Verificar pressão e camber dianteiros"
+            )
+        elif feedback["bias"] > 0.3:
+            parts.append(
+                "📋 **Diagnóstico**: Oversteer detectado.\n"
+                "A traseira do carro está escorregando. Vou sugerir:\n"
+                "• Aumentar asa traseira\n"
+                "• Endurecer ARB traseira ou amaciar dianteira\n"
+                "• Verificar camber e pressões traseiros"
+            )
+
+        if feedback["entry"]:
+            parts.append("📍 Problema na **entrada** da curva — vou focar em freios e aero.")
+        if feedback["mid"]:
+            parts.append("📍 Problema no **meio** da curva — vou focar em molas e ARB.")
+        if feedback["exit"]:
+            parts.append("📍 Problema na **saída** da curva — vou focar em tração e diferencial.")
+
+        if any(w in text for w in ("chuva", "molhad")):
+            parts.append(
+                "🌧️ Condições de chuva detectadas. Vou considerar:\n"
+                "• Aumento de ride height\n"
+                "• Redução de asa (menos splash)\n"
+                "• Pressões mais baixas para mais grip"
+            )
+
+        if any(w in text for w in ("pneu", "temperatura", "superaquec")):
+            parts.append(
+                "🏎️ Problema de pneus detectado. Vou verificar:\n"
+                "• Pressões e camber para distribuição de temperatura\n"
+                "• Carga aerodinâmica para desgaste"
+            )
+
+        if any(w in text for w in ("freio", "trava", "bloqueio")):
+            parts.append(
+                "🛑 Problema de frenagem detectado. Vou ajustar:\n"
+                "• Bias de freio\n"
+                "• Pressão de frenagem"
+            )
+
+        if not parts:
+            parts.append(
+                "Entendi sua solicitação. Vou analisar a telemetria atual "
+                "e gerar sugestões de ajuste. Use os botões 'Pedir Sugestão IA' "
+                "ou 'Usar Heurísticas' para receber as mudanças."
+            )
+
+        parts.append("\n🔧 Veja as sugestões no painel à direita →")
+        return "\n\n".join(parts)
+
+    def _auto_suggest(self, feedback: dict):  # noqa: ARG002
+        """
+        Tenta gerar sugestões automáticas baseadas no feedback.
+        Executa em thread separada para não travar a GUI.
+        """
+        if not self.engine:
+            return
+
+        def _generate_suggestions():
+            try:
+                if hasattr(self.engine, "request_heuristic_suggestion"):
+                    deltas, warnings = self.engine.request_heuristic_suggestion()
+                    # Atualizar GUI na thread principal
+                    self.after(10, lambda: self.display_suggestions(deltas, warnings))
+            except Exception:
+                logger.debug("Auto-sugestão falhou silenciosamente")
+        
+        # Executar em thread separada para não bloquear (threading já importado no topo)
+        thread = threading.Thread(target=_generate_suggestions, daemon=True)
+        thread.start()
+
+    def _rebuild_dynamic_adjustable_widgets(self, svm):
+        """Cria widgets extras para todos os parâmetros ajustáveis do setup."""
+        if self._dynamic_section_frame is not None:
+            self._dynamic_section_frame.destroy()
+            self._dynamic_section_frame = None
+
+        for key in list(self._dynamic_widget_keys):
+            self._delta_widgets.pop(key, None)
+        self._dynamic_widget_keys.clear()
+
+        if not svm or not hasattr(svm, "get_adjustable_params"):
+            return
+
+        all_params = list(svm.get_adjustable_params())
+        if not all_params:
+            return
+
+        sec = ctk.CTkFrame(self._sug_scroll, fg_color="transparent")
+        ctk.CTkLabel(
+            sec,
+            text="🧩 Todos os Parâmetros Ajustáveis do Setup",
+            font=("Arial", 11, "bold"),
+            text_color=COLORS["accent_cyan"],
+            anchor="w",
+        ).pack(fill="x", padx=8, pady=(6, 1))
+
+        all_params = sorted(all_params, key=lambda p: (p.section, p.name))
+        for p in all_params:
+            key = p.full_key
+            label = f"[{p.section}] {p.name}"
+            w = DeltaDisplay(
+                sec,
+                param_name=label,
+                param_key=key,
+                on_change=self._on_delta_manual_change,
+            )
+            w.pack(fill="x", padx=12, pady=1)
+            w.set_delta(0, current_index=p.index, current_desc=p.description)
+            self._delta_widgets[key] = w
+            self._dynamic_widget_keys.add(key)
+
+        sec.pack(fill="x")
+        self._dynamic_section_frame = sec
+
+    def _refresh_widget_current_values(self):
+        """Atualiza índices atuais em todos os widgets com base no setup."""
+        if not self.engine or not hasattr(self.engine, "get_base_setup"):
+            return
+
+        base_svm = self.engine.get_base_setup()
+        if not base_svm:
+            return
+
+        from core.brain import DELTA_TO_SVM
+        for key, widget in self._delta_widgets.items():
+            idx = None
+            if key in DELTA_TO_SVM:
+                for svm_key in DELTA_TO_SVM[key]:
+                    p = base_svm.get_param(svm_key)
+                    if p and p.adjustable:
+                        idx = p.index
+                        break
+            else:
+                p = base_svm.get_param(key)
+                if p and p.adjustable:
+                    idx = p.index
+            widget.set_delta(widget.get_delta(), current_index=idx)
+
+    # ─── Setup Base ─────────────────────────────────────
+
+    def _on_load_base(self):
+        """Carrega um arquivo .svm como base."""
+        initial_dir = None
+        if self.engine and self.engine.lmu_path:
+            settings_dir = (
+                self.engine.lmu_path / "UserData" / "player" / "Settings"
+            )
+            if settings_dir.exists():
+                initial_dir = str(settings_dir)
+
+        filepath = filedialog.askopenfilename(
+            title="Selecionar Setup Base (.svm)",
+            initialdir=initial_dir,
+            filetypes=[("Setup files", "*.svm"), ("Todos", "*.*")],
+        )
+        if not filepath:
+            return
+
+        try:
+            if self.engine:
+                svm = self.engine.load_base_setup(filepath)
+                name = Path(filepath).name
+                n_params = len(svm.get_adjustable_params()) if hasattr(svm, 'get_adjustable_params') else '?'
+                self._base_info.configure(
+                    text=f"📄 {name}\n"
+                         f"📁 {Path(filepath).parent.name}\n"
+                         f"🔧 {n_params} parâmetros ajustáveis",
+                    text_color=COLORS["accent_green"],
+                )
+                self._add_message(
+                    f"Setup base carregado: **{name}**\n"
+                    f"Agora me diga o que você sente no carro, "
+                    f"ou use os botões para gerar sugestões!",
+                    sender="ai",
+                )
+
+                self._rebuild_dynamic_adjustable_widgets(svm)
+                self._refresh_widget_current_values()
+
+                # Notificar app (para atualizar footer/menu)
+                app = self.winfo_toplevel()
+                if hasattr(app, "_on_base_loaded"):
+                    app._on_base_loaded(filepath)
+
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao Carregar",
+                f"Não foi possível carregar o arquivo:\n{e}",
+            )
+
+    def _on_view_base(self):
+        """Mostra detalhes do setup base."""
+        if not self.engine or not hasattr(self.engine, "get_base_setup"):
+            return
+        svm = self.engine.get_base_setup()
+        if not svm:
+            self._add_message(_("msg_no_base_loaded"), sender="system")
+            return
+
+        params = svm.get_adjustable_params()
+        info = (
+            f"Arquivo: {svm.filepath.name}\n"
+            f"Diretório: {svm.filepath.parent}\n"
+            f"Seções: {', '.join(svm.sections)}\n"
+            f"Simétrico: {'Sim' if svm.symmetric else 'Não'}\n"
+            f"Parâmetros ajustáveis: {len(params)}\n"
+            f"{'─' * 45}\n"
+        )
+        for p in params:
+            info += f"  [{p.section}] {p.name} = {p.index} // {p.description}\n"
+
+        win = ctk.CTkToplevel(self.winfo_toplevel())
+        win.title(f"Setup Base — {svm.filepath.name}")
+        win.geometry("650x500")
+        txt = ctk.CTkTextbox(win, font=("Consolas", 11))
+        txt.pack(fill="both", expand=True, padx=10, pady=10)
+        txt.insert("end", info)
+        txt.configure(state="disabled")
+
+    def _on_clear_base(self):
+        """Limpa o setup base."""
+        if self.engine and hasattr(self.engine, "clear_base_setup"):
+            self.engine.clear_base_setup()
+        if self._dynamic_section_frame is not None:
+            self._dynamic_section_frame.destroy()
+            self._dynamic_section_frame = None
+        for key in list(self._dynamic_widget_keys):
+            self._delta_widgets.pop(key, None)
+        self._dynamic_widget_keys.clear()
+        self._base_info.configure(
+            text="Nenhum setup carregado",
+            text_color=COLORS["text_secondary"],
+        )
+        self._add_message(_("msg_base_removed"), sender="system")
+
+        app = self.winfo_toplevel()
+        if hasattr(app, "_on_base_cleared"):
+            app._on_base_cleared()
+
+    # ─── Ações ──────────────────────────────────────────
+
+    def _on_auto_detect_generate(self):
+        """
+        Detecta automaticamente o carro na pista via Shared Memory,
+        busca o melhor setup histórico no banco e gera um novo .svm.
+        """
+        if not self.engine or not hasattr(self.engine, "auto_detect_and_generate_setup"):
+            self._add_message(
+                "Engine não disponível.", sender="system",
+            )
+            return
+
+        self._add_message(
+            "🔍 Detectando carro e pista via Shared Memory...",
+            sender="system",
+        )
+
+        def _do():
+            try:
+                new_path, source, novo_combo = self.engine.auto_detect_and_generate_setup(climate="seco")
+                car = getattr(self.engine, "_car_name", "") or "Desconhecido"
+                track = getattr(self.engine, "_track_name", "") or "Desconhecida"
+
+                def _update():
+                    name = Path(new_path).name
+                    self._base_info.configure(
+                        text=f"🎮 {car}\n📍 {track}\n📄 {name}",
+                        text_color=COLORS["accent_green"],
+                    )
+                    # Recarregar widgets de delta
+                    if hasattr(self.engine, "get_base_setup"):
+                        svm = self.engine.get_base_setup()
+                        if svm:
+                            self._rebuild_dynamic_adjustable_widgets(svm)
+                            self._refresh_widget_current_values()
+
+                    install_lap_tip = (
+                        "\n\n⚠️ **Primeira vez neste combo carro×pista.**\n"
+                        "Recomendo fazer uma **volta de instalação** para:\n"
+                        "• Verificar se o carro está dirigível\n"
+                        "• Calibrar pneus e freios\n"
+                        "• Coletar dados reais para o próximo setup\n\n"
+                        "Dirija 1 volta e peça nova sugestão para ajuste fino."
+                        if novo_combo else ""
+                    )
+
+                    self._add_message(
+                        f"✅ Setup gerado automaticamente!\n\n"
+                        f"🏎 Carro: **{car}**\n"
+                        f"📍 Pista: **{track}**\n"
+                        f"📁 Fonte: {source}\n"
+                        f"💾 Arquivo: `{name}`\n\n"
+                        f"O arquivo foi salvo na mesma pasta do template. "
+                        f"Carregue-o no jogo para usar."
+                        + install_lap_tip,
+                        sender="ai",
+                    )
+                    app = self.winfo_toplevel()
+                    if hasattr(app, "_on_base_loaded"):
+                        app._on_base_loaded(str(new_path))
+
+                self.after(0, _update)
+
+            except ValueError as e:
+                self.after(0, lambda: self._add_message(
+                    f"⚠️ {e}", sender="system",
+                ))
+            except Exception as e:
+                self.after(0, lambda: self._add_message(
+                    f"❌ Erro ao gerar setup: {e}", sender="system",
+                ))
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_create_setup(self):
+        """Abre diálogo de criação de novo setup."""
+        if not self.engine or not hasattr(self.engine, "get_base_setup"):
+            self._add_message(
+                "Carregue um setup base primeiro.", sender="system",
+            )
+            return
+
+        base = self.engine.get_base_setup()
+        if not base:
+            self._add_message(
+                "📂 Carregue um setup base primeiro usando o botão "
+                "'Carregar .svm'.",
+                sender="ai",
+            )
+            return
+
+        win = ctk.CTkToplevel(self.winfo_toplevel())
+        win.title("✨ Criar Novo Setup")
+        win.geometry("500x420")
+        win.grab_set()
+
+        # Modo
+        ctk.CTkLabel(
+            win, text="Modo de Criação:",
+            font=("Arial", 13, "bold"),
+        ).pack(anchor="w", padx=15, pady=(15, 5))
+
+        mode_var = ctk.StringVar(value="ia")
+        for label, val in [
+            ("🤖 IA + Heurísticas (recomendado)", "ia"),
+            ("📐 Apenas Heurísticas", "heuristic"),
+            ("📋 Cópia exata (sem mudanças)", "copy"),
+        ]:
+            ctk.CTkRadioButton(
+                win, text=label, variable=mode_var, value=val,
+            ).pack(anchor="w", padx=30)
+
+        # Clima
+        ctk.CTkLabel(
+            win, text="Condição Climática:",
+            font=("Arial", 13, "bold"),
+        ).pack(anchor="w", padx=15, pady=(15, 5))
+
+        climate_var = ctk.StringVar(value="seco")
+        for label, val in [
+            ("☀️ Seco", "seco"),
+            ("🌦️ Chuva Leve", "chuva_leve"),
+            ("🌧️ Chuva Forte", "chuva_forte"),
+            ("💧 Misto (secando)", "misto"),
+            ("🔄 Mesclado (50/50)", "mescla"),
+        ]:
+            ctk.CTkRadioButton(
+                win, text=label, variable=climate_var, value=val,
+            ).pack(anchor="w", padx=30)
+
+        ctk.CTkLabel(
+            win,
+            text=f"Base: {base.filepath.name}\n"
+                 f"O arquivo base NÃO será modificado.\n"
+                 f"Um NOVO arquivo será criado na mesma pasta.",
+            font=("Arial", 11), text_color=COLORS["text_secondary"],
+            justify="left",
+        ).pack(anchor="w", padx=15, pady=(15, 5))
+
+        def _do_create():
+            mode = mode_var.get()
+            climate = climate_var.get()
+            try:
+                new_path = self.engine.create_setup_from_base(
+                    mode=mode, climate=climate
+                )
+                win.destroy()
+                self._add_message(
+                    f"✅ Novo setup criado: **{new_path.name}**\n"
+                    f"📁 Salvo em: {new_path.parent}",
+                    sender="ai",
+                )
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao criar setup:\n{e}")
+
+        ctk.CTkButton(
+            win, text="✨ Criar Novo Setup", command=_do_create,
+            fg_color=COLORS["accent_green"], hover_color="#009955",
+            height=38, font=("Arial", 12, "bold"),
+        ).pack(pady=15)
+
+    def _on_edit_setup(self):
+        """Edita um .svm existente."""
+        initial_dir = None
+        if self.engine and self.engine.lmu_path:
+            settings_dir = (
+                self.engine.lmu_path / "UserData" / "player" / "Settings"
+            )
+            if settings_dir.exists():
+                initial_dir = str(settings_dir)
+
+        filepath = filedialog.askopenfilename(
+            title="Selecionar Setup para Editar (.svm)",
+            initialdir=initial_dir,
+            filetypes=[("Setup files", "*.svm"), ("Todos", "*.*")],
+        )
+        if not filepath:
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirmar Edição",
+            f"Arquivo: {Path(filepath).name}\n\n"
+            f"Um backup (.svm.bak) será criado.\nDeseja continuar?",
+        )
+        if not confirm:
+            return
+
+        try:
+            if self.engine:
+                self.engine.load_setup(filepath)
+                self._add_message(
+                    f"✏️ Editando: **{Path(filepath).name}**\n"
+                    f"Backup criado automaticamente.\n"
+                    f"Use 'Pedir Sugestão IA' para receber ajustes.",
+                    sender="ai",
+                )
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao abrir setup:\n{e}")
+
+    def _on_request_ai(self):
+        """Pede sugestão da IA em background thread."""
+        if not self.engine or not hasattr(self.engine, "request_suggestion"):
+            self._add_message(_("msg_engine_unavailable"), sender="system")
+            return
+
+        self._add_message(_("msg_requesting_ai"), sender="system")
+        self._btn_send.configure(state="disabled")
+
+        def _work():
+            try:
+                deltas, warnings = self.engine.request_suggestion()
+                display_deltas = getattr(self.engine, '_last_display_deltas', {})
+                self.after(0, lambda: self._finish_suggestion(
+                    display_deltas, warnings, _("msg_ai_suggestions_ready")))
+            except Exception as e:
+                self.after(0, lambda: self._add_message(f"Erro: {e}", sender="system"))
+            finally:
+                self.after(0, lambda: self._btn_send.configure(state="normal"))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_request_heuristics(self):
+        """Pede sugestão das heurísticas em background thread."""
+        if not self.engine or not hasattr(self.engine, "request_heuristic_suggestion"):
+            self._add_message(_("msg_engine_unavailable"), sender="system")
+            return
+
+        self._add_message(_("msg_calculating_heuristics"), sender="system")
+        self._btn_send.configure(state="disabled")
+
+        def _work():
+            try:
+                deltas, warnings = self.engine.request_heuristic_suggestion()
+                display_deltas = getattr(self.engine, '_last_display_deltas', {})
+                self.after(0, lambda: self._finish_suggestion(
+                    display_deltas, warnings, _("msg_heuristics_ready")))
+            except Exception as e:
+                self.after(0, lambda: self._add_message(f"Erro: {e}", sender="system"))
+            finally:
+                self.after(0, lambda: self._btn_send.configure(state="normal"))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _finish_suggestion(self, display_deltas, warnings, msg):
+        """Callback na main thread após sugestão calculada."""
+        self.display_suggestions(display_deltas, warnings)
+        self._add_message(msg, sender="ai")
+
+    
+    def _on_fuel_changed(self, event=None):
+        """Callback para quando o valor do combustível é alterado."""
+        if not self.engine or not self.engine.is_setup_loaded():
+            return
+        try:
+            fuel_liters = float(self._fuel_entry.get())
+            self.engine.set_fuel(fuel_liters)
+            logger.info(f"Valor de combustível da UI atualizado para: {fuel_liters}L")
+        except (ValueError, TypeError):
+            logger.warning("Valor de combustível inválido inserido na UI.")
+
+    def _on_apply(self):
+        """Aplica as sugestões — pergunta qual arquivo usar como destino."""
+        if not self.engine or not hasattr(self.engine, "apply_suggestions"):
+            return
+
+        # Obter deltas atuais (IA + modificações manuais do usuário)
+        current_deltas = self._get_all_current_deltas()
+        if not current_deltas:
+            self._add_message(_("msg_no_suggestion"), sender="system")
+            return
+
+        # Converter para formato SVM e atualizar no engine
+        from core.brain import deltas_to_svm
+        ai_deltas = {k: v for k, v in current_deltas.items() if "." not in k}
+        direct_svm_deltas = {k: v for k, v in current_deltas.items() if "." in k}
+        svm_deltas = deltas_to_svm(ai_deltas)
+        svm_deltas.update(direct_svm_deltas)
+        self.engine._last_deltas = svm_deltas
+        self.engine._last_display_deltas = current_deltas
+
+        base = self.engine.get_base_setup() if hasattr(self.engine, 'get_base_setup') else None
+
+        win = ctk.CTkToplevel(self.winfo_toplevel())
+        win.title("📝 Aplicar Mudanças — Escolher Destino")
+        win.geometry("550x520")
+        win.minsize(550, 400)
+        win.grab_set()
+
+        # --- Frame de botões fixo no rodapé (pack PRIMEIRO = sempre visível) ---
+        btn_frame = ctk.CTkFrame(win, fg_color="transparent")
+        btn_frame.pack(side="bottom", fill="x", padx=15, pady=(5, 15))
+
+        mode_var = ctk.StringVar(value="edit_base")
+        use_as_base_var = ctk.BooleanVar(value=True)
+        create_backup_var = ctk.BooleanVar(value=False)
+
+        def _apply_pending_fuel_target(svm_obj):
+            """Aplica FuelSetting absoluto (litros) se houver cálculo pendente."""
+            fuel_target = getattr(self.engine, "_pending_fuel_target_liters", None)
+            if not fuel_target:
+                return None
+
+            fuel_param = None
+            for p in svm_obj.params.values():
+                if p.name == "FuelSetting" and p.adjustable:
+                    fuel_param = p
+                    break
+
+            if fuel_param is None:
+                return "⚠️ FuelSetting não encontrado no setup."
+
+            old_index = fuel_param.index
+            new_index = max(0, min(int(fuel_target), 200))
+            if new_index != old_index:
+                import re
+                fuel_param.index = new_index
+                old_line = svm_obj.raw_lines[fuel_param.line_number]
+                new_line = re.sub(
+                    r"^(\w+Setting\s*=\s*)\d+(\s*//.*)$",
+                    rf"\g<1>{new_index}\2",
+                    old_line,
+                )
+                svm_obj.raw_lines[fuel_param.line_number] = new_line
+
+            return f"⛽ FuelSetting aplicado: {old_index} → {new_index} L"
+
+        def _ies_badge() -> str:
+            """Calcula e formata o badge de Índice de Eficiência do Setup (IES)."""
+            try:
+                from core.reward import classify_setup_efficiency
+                ies = classify_setup_efficiency(
+                    delta_laptime=getattr(self.engine, "_last_delta_laptime", 0.0),
+                    delta_consumption=getattr(self.engine, "_last_delta_consumption", 0.0),
+                )
+                _ICONS = {
+                    "EXCELENTE": "🟢", "AGRESSIVO": "🟠",
+                    "CONSERVADOR": "🔵", "DESASTROSO": "🔴",
+                }
+                icon = _ICONS.get(ies, "⚪")
+                return f"\n{icon} IES — Eficiência do Setup: **{ies}**\n"
+            except Exception:
+                return ""
+
+        def _do_apply():
+            mode = mode_var.get()
+            use_as_base = use_as_base_var.get()
+            create_backup = create_backup_var.get()
+
+            try:
+                if mode == "edit_base":
+                    if not base:
+                        messagebox.showerror("Erro", "Nenhum setup base carregado.")
+                        return
+                    from data.svm_parser import parse_svm, apply_deltas, save_svm
+                    svm = parse_svm(str(base.filepath))
+                    apply_deltas(svm, self.engine._last_deltas)
+                    fuel_note = _apply_pending_fuel_target(svm)
+                    if create_backup:
+                        save_svm(
+                            svm,
+                            backup=True,
+                            backup_dir=str(self.engine.config.get(
+                                "backup_dir", Path(base.filepath).parent / "backups"
+                            )),
+                        )
+                    else:
+                        save_svm(svm, backup=False)
+                    win.destroy()
+                    self._btn_apply.configure(state="disabled")
+                    self._add_message(
+                        f"✅ Mudanças aplicadas em: **{base.filepath.name}**\n"
+                        f"✏️ Arquivo editado no mesmo local.\n"
+                        + ("📂 Backup criado antes de salvar.\n" if create_backup else "") +
+                        (f"{fuel_note}\n" if fuel_note else "") +
+                        _ies_badge() +
+                        "Volte para a pista e me diga como ficou!",
+                        sender="ai",
+                    )
+                    if use_as_base:
+                        self.engine.load_base_setup(str(base.filepath))
+                        self._update_base_info(base.filepath)
+
+                elif mode == "new_file":
+                    if not base:
+                        messagebox.showerror("Erro", "Nenhum setup base carregado para usar de referência.")
+                        return
+                    from data.svm_parser import parse_svm, apply_deltas, save_svm
+                    svm = parse_svm(str(base.filepath))
+                    apply_deltas(svm, self.engine._last_deltas)
+                    fuel_note = _apply_pending_fuel_target(svm)
+                    suggested = self.engine._generate_setorflow_path("ajustado")
+                    save_path = filedialog.asksaveasfilename(
+                        title="Salvar novo setup ajustado",
+                        initialdir=str(suggested.parent),
+                        initialfile=suggested.name,
+                        defaultextension=".svm",
+                        filetypes=[("Setup files", "*.svm"), ("Todos", "*.*")],
+                    )
+                    if not save_path:
+                        return
+
+                    new_path = Path(save_path)
+                    save_svm(svm, output_path=new_path, backup=False)
+                    win.destroy()
+                    self._btn_apply.configure(state="disabled")
+                    self._add_message(
+                        f"✅ Novo setup criado: **{new_path.name}**\n"
+                        f"📁 Salvo em: {new_path.parent}\n"
+                        + (f"{fuel_note}\n" if fuel_note else "") +
+                        _ies_badge() +
+                        "O arquivo base original NÃO foi alterado.",
+                        sender="ai",
+                    )
+                    if use_as_base:
+                        self.engine.load_base_setup(str(new_path))
+                        self._update_base_info(new_path)
+
+                elif mode == "choose_other":
+                    initial_dir = None
+                    if self.engine and self.engine.lmu_path:
+                        settings_dir = (
+                            self.engine.lmu_path / "UserData" / "player" / "Settings"
+                        )
+                        if settings_dir.exists():
+                            initial_dir = str(settings_dir)
+
+                    filepath = filedialog.askopenfilename(
+                        title="Escolher arquivo .svm para aplicar mudanças",
+                        initialdir=initial_dir,
+                        filetypes=[("Setup files", "*.svm"), ("Todos", "*.*")],
+                    )
+                    if not filepath:
+                        return
+
+                    from data.svm_parser import parse_svm, apply_deltas, save_svm
+                    svm = parse_svm(filepath)
+                    apply_deltas(svm, self.engine._last_deltas)
+                    fuel_note = _apply_pending_fuel_target(svm)
+                    if create_backup:
+                        save_svm(
+                            svm,
+                            output_path=filepath,
+                            backup=True,
+                            backup_dir=str(Path(filepath).parent / "backups"),
+                        )
+                    else:
+                        save_svm(svm, output_path=filepath, backup=False)
+                    win.destroy()
+                    self._btn_apply.configure(state="disabled")
+                    self._add_message(
+                        f"✅ Mudanças aplicadas em: **{Path(filepath).name}**\n"
+                        f"✏️ Arquivo editado no mesmo local.\n"
+                        + ("📂 Backup criado antes de salvar.\n" if create_backup else "")
+                        + (f"{fuel_note}" if fuel_note else "")
+                        + _ies_badge(),
+                        sender="ai",
+                    )
+                    if use_as_base:
+                        self.engine.load_base_setup(filepath)
+                        self._update_base_info(Path(filepath))
+
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao aplicar mudanças:\n{e}")
+
+        ctk.CTkButton(
+            btn_frame, text="✅ Aplicar Mudanças", command=_do_apply,
+            fg_color=COLORS["accent_green"], hover_color="#009955",
+            height=42, font=("Arial", 13, "bold"),
+        ).pack(fill="x", pady=(0, 5))
+
+        ctk.CTkButton(
+            btn_frame, text="Cancelar", command=win.destroy,
+            fg_color="#555555", hover_color="#444444",
+            height=32, font=("Arial", 11),
+        ).pack(fill="x")
+
+        # --- Conteúdo rolável acima dos botões ---
+        content_scroll = ctk.CTkScrollableFrame(
+            win, fg_color="transparent",
+        )
+        content_scroll.pack(side="top", fill="both", expand=True, padx=5, pady=(5, 0))
+
+        ctk.CTkLabel(
+            content_scroll, text="Onde aplicar as mudanças?",
+            font=("Arial", 15, "bold"),
+            text_color=COLORS["accent_blue"],
+        ).pack(anchor="w", padx=10, pady=(10, 10))
+
+        # Opção 1: Editar o arquivo base carregado
+        base_name = base.filepath.name if base else "Nenhum carregado"
+        r1 = ctk.CTkRadioButton(
+            content_scroll,
+            text=f"✏️ Editar arquivo base atual: {base_name}",
+            variable=mode_var, value="edit_base",
+            font=("Arial", 12),
+        )
+        r1.pack(anchor="w", padx=25, pady=3)
+        if not base:
+            r1.configure(state="disabled")
+
+        ctk.CTkLabel(
+            content_scroll,
+            text="     O arquivo base será modificado (backup automático criado).",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=25)
+
+        # Opção 2: Criar novo arquivo com as mudanças
+        ctk.CTkRadioButton(
+            content_scroll,
+            text="✨ Criar NOVO arquivo com as mudanças",
+            variable=mode_var, value="new_file",
+            font=("Arial", 12),
+        ).pack(anchor="w", padx=25, pady=(10, 3))
+
+        ctk.CTkLabel(
+            content_scroll,
+            text="     Um novo .svm será criado, o arquivo base NÃO muda.",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=25)
+
+        # Preview do nome SECTORFLOW gerado automaticamente
+        try:
+            _preview_name = self.engine._generate_setorflow_path("ajustado").name
+        except Exception:
+            _preview_name = "SECTORFLOW_DRY_???_???_DDMM_V1_Q.svm"
+        ctk.CTkLabel(
+            content_scroll,
+            text=f"     📝 Nome gerado: {_preview_name}",
+            font=("JetBrains Mono", 10),
+            text_color=COLORS["accent_cyan"],
+        ).pack(anchor="w", padx=25, pady=(2, 8))
+
+        # Opção 3: Escolher outro arquivo
+        ctk.CTkRadioButton(
+            content_scroll,
+            text="📂 Escolher OUTRO arquivo .svm para editar",
+            variable=mode_var, value="choose_other",
+            font=("Arial", 12),
+        ).pack(anchor="w", padx=25, pady=(10, 3))
+
+        ctk.CTkLabel(
+            content_scroll,
+            text="     Selecione um arquivo diferente para aplicar as mudanças.",
+            font=("Arial", 10), text_color=COLORS["text_secondary"],
+        ).pack(anchor="w", padx=25)
+
+        # Separador
+        ctk.CTkFrame(content_scroll, height=2, fg_color=COLORS["separator"]).pack(
+            fill="x", padx=10, pady=15
+        )
+
+        # Checkbox: usar o arquivo escolhido como nova base
+        ctk.CTkCheckBox(
+            content_scroll,
+            text="🔄 Após aplicar, usar o arquivo resultante como nova base de referência",
+            variable=use_as_base_var,
+            font=("Arial", 11),
+        ).pack(anchor="w", padx=25, pady=(0, 5))
+
+        # Checkbox: criar backup antes de editar arquivo existente
+        ctk.CTkCheckBox(
+            content_scroll,
+            text="📂 Criar backup antes de aplicar (evita perda de dados)",
+            variable=create_backup_var,
+            font=("Arial", 11),
+        ).pack(anchor="w", padx=25, pady=(0, 15))
+
+        # Preview das mudanças
+        if self.engine._last_display_deltas:
+            preview_card = Card(content_scroll, title="📋 Resumo das Mudanças")
+            preview_card.pack(fill="x", padx=10, pady=(0, 10))
+
+            preview_inner = ctk.CTkFrame(
+                preview_card, fg_color="transparent",
+            )
+            preview_inner.pack(fill="x", padx=10, pady=(0, 8))
+
+            from core.brain import DELTA_TO_SVM
+            for delta_name, delta_val in self.engine._last_display_deltas.items():
+                if delta_val == 0:
+                    continue
+                svm_keys = DELTA_TO_SVM.get(delta_name, [delta_name])
+                arrow = "▲" if delta_val > 0 else "▼"
+                color = COLORS["accent_green"] if delta_val > 0 else COLORS["accent_red"]
+
+                # Mostrar valor atual se base carregado
+                current_str = ""
+                if base:
+                    for sk in svm_keys:
+                        param = base.get_param(sk)
+                        if param and param.adjustable:
+                            new_idx = max(0, param.index + delta_val)
+                            current_str = f"  [{param.index}] → [{new_idx}]"
+                            break
+
+                ctk.CTkLabel(
+                    preview_inner,
+                    text=f"  {arrow} {delta_name}: {delta_val:+d}{current_str}",
+                    font=("JetBrains Mono", 10),
+                    text_color=color,
+                    anchor="w",
+                ).pack(anchor="w")
+
+                # Mostrar todos os parâmetros SVM afetados por este delta.
+                for sk in svm_keys:
+                    if base:
+                        p = base.get_param(sk)
+                        if p and p.adjustable:
+                            new_idx = max(0, p.index + delta_val)
+                            detail = f"      • {sk}: [{p.index}] → [{new_idx}]"
+                        else:
+                            detail = f"      • {sk}: (não ajustável/não encontrado)"
+                    else:
+                        detail = f"      • {sk}"
+
+                    ctk.CTkLabel(
+                        preview_inner,
+                        text=detail,
+                        font=("JetBrains Mono", 9),
+                        text_color=COLORS["text_secondary"],
+                        anchor="w",
+                    ).pack(anchor="w")
+
+            # Exibir combustível pendente (valor absoluto em litros) quando disponível.
+            pending_fuel = getattr(self.engine, "_pending_fuel_target_liters", None)
+            if pending_fuel:
+                fuel_preview = f"  ⛽ FuelSetting (absoluto): [{int(pending_fuel)}] L"
+                ctk.CTkLabel(
+                    preview_inner,
+                    text=fuel_preview,
+                    font=("JetBrains Mono", 10, "bold"),
+                    text_color=COLORS["accent_yellow"],
+                    anchor="w",
+                ).pack(anchor="w", pady=(4, 0))
+
+    def _update_base_info(self, filepath):
+        """Atualiza o label de info do setup base."""
+        svm = self.engine.get_base_setup()
+        if svm:
+            n_params = len(svm.get_adjustable_params())
+            self._base_info.configure(
+                text=f"📄 {filepath.name if hasattr(filepath, 'name') else Path(filepath).name}\n"
+                     f"📁 {filepath.parent if hasattr(filepath, 'parent') else Path(filepath).parent.name}\n"
+                     f"🔧 {n_params} parâmetros ajustáveis",
+                text_color=COLORS["accent_green"],
+            )
+            self._rebuild_dynamic_adjustable_widgets(svm)
+            self._refresh_widget_current_values()
+
+    def _on_rate(self, score: float):
+        """Avalia o resultado da última sugestão."""
+        if not self.engine or not hasattr(self.engine, "rate_last_suggestion"):
+            return
+        self.engine.rate_last_suggestion(score)
+
+        labels = {1.0: "👍 Melhorou", 0.0: "😐 Igual", -1.0: "👎 Piorou"}
+        self._add_message(
+            f"Avaliação registrada: {labels.get(score, '?')}\n"
+            f"Isso ajuda a IA a aprender suas preferências!",
+            sender="system",
+        )
+
+    # ─── Display ────────────────────────────────────────
+
+    def _update_param_visibility(self):
+        """Mostra todas as seções de parâmetros para edição completa."""
+        for frame, level in self._section_frames:
+            frame.pack_forget()
+        for frame, level in self._section_frames:
+            frame.pack(fill="x")
+
+    def display_suggestions(self, deltas: dict[str, int],
+                            warnings: list[str] | None = None):
+        """Atualiza o display de sugestões com valores atuais → novos."""
+        # Obter índices atuais do setup base para mostrar valor atual → novo
+        current_indices = {}
+        if self.engine and hasattr(self.engine, 'get_base_setup'):
+            base_svm = self.engine.get_base_setup()
+            if base_svm:
+                from core.brain import DELTA_TO_SVM
+                for delta_name, svm_keys in DELTA_TO_SVM.items():
+                    for svm_key in svm_keys:
+                        param = base_svm.get_param(svm_key)
+                        if param and param.adjustable:
+                            current_indices[delta_name] = (param.index, param.description)
+                            break  # Pegar apenas o primeiro (FL para F/R)
+
+                for key in self._dynamic_widget_keys:
+                    param = base_svm.get_param(key)
+                    if param and param.adjustable:
+                        current_indices[key] = (param.index, param.description)
+
+        for key, widget in self._delta_widgets.items():
+            delta = deltas.get(key, 0)
+            idx_info = current_indices.get(key)
+            if idx_info:
+                widget.set_delta(delta, current_index=idx_info[0],
+                                 current_desc=idx_info[1])
+            else:
+                widget.set_delta(delta)
+
+        has = any(v != 0 for v in deltas.values())
+        self._btn_apply.configure(state="normal" if has else "disabled")
+
+        self._warnings_text.configure(state="normal")
+        self._warnings_text.delete("1.0", "end")
+        self._warnings_text.insert(
+            "end", "\n".join(warnings) if warnings else "Nenhum aviso.",
+        )
+        self._warnings_text.configure(state="disabled")
+
+    def refresh(self):
+        """Atualiza dados dinâmicos e sugestões em tempo real."""
+        if not self.engine:
+            return
+        if hasattr(self.engine, "ai_confidence") and hasattr(self.engine, "total_samples"):
+            self._confidence.set_confidence(
+                self.engine.ai_confidence(), self.engine.total_samples()
+            )
+        # Atualizar indicador de nível e visibilidade das seções
+        if hasattr(self.engine, "_current_level"):
+            level = self.engine._current_level
+            level_upper = level.upper()
+            level_colors = {
+                "BASIC": COLORS["accent_yellow"],
+                "INTERMEDIATE": COLORS["accent_cyan"],
+                "ADVANCED": COLORS["accent_green"],
+            }
+            self._level_label.configure(
+                text=level_upper,
+                text_color=level_colors.get(level_upper, COLORS["text_secondary"]),
+            )
+            self._current_display_level = level
+
+        # Atualizar deltas em tempo real a partir da última sugestão
+        display_deltas = getattr(self.engine, '_last_display_deltas', None)
+        if display_deltas:
+            # Obter índices atuais para exibição
+            current_indices = {}
+            base_svm = self.engine.get_base_setup() if hasattr(self.engine, 'get_base_setup') else None
+            if base_svm:
+                from core.brain import DELTA_TO_SVM
+                for delta_name, svm_keys in DELTA_TO_SVM.items():
+                    for svm_key in svm_keys:
+                        param = base_svm.get_param(svm_key)
+                        if param and param.adjustable:
+                            current_indices[delta_name] = param.index
+                            break
+            for key, widget in self._delta_widgets.items():
+                delta = display_deltas.get(key, 0)
+                idx = current_indices.get(key)
+                widget.set_delta(delta, current_index=idx)
+
+        self._refresh_widget_current_values()
+
+    # ─── Edição Manual de Deltas ────────────────────────
+
+    def _on_delta_manual_change(self, param_key: str, new_delta: int):
+        """Chamado quando o usuário modifica manualmente um delta via botões +/-."""
+        self._manual_deltas[param_key] = new_delta
+
+        # Atualizar engine._last_display_deltas para refletir a mudança
+        if self.engine:
+            if not hasattr(self.engine, '_last_display_deltas') or not self.engine._last_display_deltas:
+                self.engine._last_display_deltas = {}
+            self.engine._last_display_deltas[param_key] = new_delta
+
+            # Também atualiza _last_deltas (formato SVM)
+            from core.brain import deltas_to_svm
+            # Converter o delta individual para formato SVM
+            svm_delta = deltas_to_svm({param_key: new_delta})
+            if not hasattr(self.engine, '_last_deltas') or not self.engine._last_deltas:
+                self.engine._last_deltas = {}
+            # Remover deltas antigos desse parâmetro e adicionar o novo
+            from core.brain import DELTA_TO_SVM
+            svm_keys = DELTA_TO_SVM.get(param_key, [])
+            if svm_keys:
+                for svm_key in svm_keys:
+                    if new_delta == 0:
+                        self.engine._last_deltas.pop(svm_key, None)
+                    else:
+                        self.engine._last_deltas[svm_key] = new_delta
+            elif "." in param_key:
+                if new_delta == 0:
+                    self.engine._last_deltas.pop(param_key, None)
+                else:
+                    self.engine._last_deltas[param_key] = new_delta
+
+        # Habilitar/desabilitar botão aplicar baseado em se há algum delta != 0
+        has_any_delta = any(
+            widget.get_delta() != 0 for widget in self._delta_widgets.values()
+        )
+        self._btn_apply.configure(
+            state="normal" if has_any_delta else "disabled"
+        )
+
+        logger.debug("Delta manual: %s = %d", param_key, new_delta)
+
+    def _get_all_current_deltas(self) -> dict[str, int]:
+        """Retorna todos os deltas atuais (IA + modificações manuais)."""
+        deltas = {}
+        for key, widget in self._delta_widgets.items():
+            delta = widget.get_delta()
+            if delta != 0:
+                deltas[key] = delta
+        return deltas
+
+    # ─── Auto-suggest callbacks ─────────────────────────
+
+    def _on_toggle_auto_suggest(self):
+        """Habilita/desabilita auto-sugestão."""
+        if self.engine and hasattr(self.engine, "set_auto_suggest_enabled"):
+            enabled = self._auto_toggle.get() == 1
+            self.engine.set_auto_suggest_enabled(enabled)
+            state = "habilitada" if enabled else "desabilitada"
+            self._add_message(
+                f"🤖 IA autônoma **{state}**.",
+                sender="system",
+            )
+
+    def _on_change_interval(self, value: str):
+        """Muda o intervalo de auto-sugestão."""
+        if self.engine and hasattr(self.engine, "set_auto_suggest_interval"):
+            self.engine.set_auto_suggest_interval(int(value))
+            self._add_message(
+                f"🤖 Auto-sugestão agora a cada **{value}** voltas.",
+                sender="system",
+            )
+
+    # ─── API Key / LLM ─────────────────────────────────
+
+    def _toggle_api_key_visibility(self):
+        """Mostra/esconde a API key no campo."""
+        current = self._api_key_entry.cget("show")
+        if current == "•":
+            self._api_key_entry.configure(show="")
+            self._api_show_btn.configure(text="🔒")
+        else:
+            self._api_key_entry.configure(show="•")
+            self._api_show_btn.configure(text="👁")
+
+    def _toggle_api_key_visibility(self):
+        """Mostra/esconde a API key no campo."""
+        current = self._api_key_entry.cget("show")
+        if current == "•":
+            self._api_key_entry.configure(show="")
+            self._api_show_btn.configure(text="🔒")
+        else:
+            self._api_key_entry.configure(show="•")
+            self._api_show_btn.configure(text="👁")
+
+    # ─── Destilação de Conhecimento ─────────────────────
+
+    def _on_start_distillation(self):
+        """Inicia o processo de destilação do LLM → rede neural."""
+        if not self.engine:
+            return
+
+        provider, key, custom_url = self._normalize_llm_provider_inputs()
+        model = self._resolve_selected_model(provider)
+
+        if not model:
+            messagebox.showwarning(
+                "Modelo necessário",
+                "Informe o nome do modelo antes de iniciar a destilação.",
+            )
+            return
+
+        # Verificar se API está configurada (LM Studio local não exige key)
+        if not key and provider != "lmstudio":
+            messagebox.showwarning(
+                "API necessária",
+                "Configure a API key primeiro.\n"
+                "A destilação usa a API como professor "
+                "para treinar a rede neural.",
+            )
+            return
+
+        if hasattr(self.engine, "llm_advisor"):
+            self.engine.llm_advisor.set_provider(provider, custom_url)
+            self.engine.llm_advisor.set_model(model)
+            self.engine.llm_advisor.set_api_key(key)
+
+        # Verificar se já está rodando
+        if (hasattr(self.engine, 'distiller')
+                and self.engine.distiller.progress.is_running):
+            messagebox.showinfo(
+                "Em andamento",
+                "A destilação já está em andamento.",
+            )
+            return
+
+        # Confirmar com o usuário
+        car_class = ""
+        if hasattr(self.engine, '_car_class'):
+            car_class = self.engine._car_class
+        if not car_class:
+            car_class = "hypercar"
+
+        ok = messagebox.askyesno(
+            "Destilar Conhecimento",
+            f"Isso vai gerar 60 cenários para '{car_class}' "
+            f"e consultar a API para cada um.\n\n"
+            f"A rede neural vai APRENDER com cada resposta "
+            f"do LLM, ficando mais autônoma.\n\n"
+            f"Isso usa ~60 chamadas à API (pode levar "
+            f"alguns minutos).\n\nContinuar?",
+        )
+        if not ok:
+            return
+
+        self._distill_btn.configure(
+            state="disabled",
+            text="⏳ Destilando...",
+        )
+        self._distill_status.configure(
+            text="Iniciando destilação...",
+        )
+
+        # Iniciar destilação em background
+        self.engine.start_knowledge_distillation(
+            car_class=car_class,
+            n_scenarios=60,
+            callback=self._on_distill_progress,
+        )
+
+    def _on_distill_progress(self, progress):
+        """
+        Callback chamado a cada cenário da destilação.
+        Atualiza a barra de progresso e status na GUI.
+        """
+        def _update():
+            try:
+                # Barra de progresso
+                if progress.total_scenarios > 0:
+                    pct = (
+                        progress.completed
+                        / progress.total_scenarios
+                    )
+                    self._autonomy_bar.set(pct)
+
+                # Status
+                self._distill_status.configure(
+                    text=progress.message,
+                )
+
+                # Quando terminar
+                if progress.phase in ("done", "error"):
+                    self._distill_btn.configure(
+                        state="normal",
+                        text="🧠 Destilar Conhecimento do LLM",
+                    )
+                    self._update_autonomy_display()
+
+                    if progress.phase == "done":
+                        self._add_message(
+                            f"🎓 **Destilação concluída!**\n\n"
+                            f"{progress.message}\n\n"
+                            f"A rede neural incorporou o "
+                            f"conhecimento do LLM.",
+                            is_user=False,
+                        )
+            except Exception:
+                pass
+
+        self.after(0, _update)
+
+    def _update_autonomy_display(self):
+        """Atualiza a exibição de autonomia com dados salvos."""
+        if not self.engine or not hasattr(
+                self.engine, 'distiller'):
+            return
+
+        try:
+            status = self.engine.get_autonomy_status()
+            score = status["score"]
+
+            self._autonomy_bar.set(score)
+            self._autonomy_label.configure(
+                text=status["status_text"],
+            )
+
+            # Cor da barra pelo nível
+            if score >= 0.90:
+                self._autonomy_bar.configure(
+                    progress_color=COLORS["accent_green"],
+                )
+            elif score >= 0.70:
+                self._autonomy_bar.configure(
+                    progress_color="#FFA500",
+                )
+            elif score >= 0.40:
+                self._autonomy_bar.configure(
+                    progress_color=COLORS["accent_blue"],
+                )
+            else:
+                self._autonomy_bar.configure(
+                    progress_color=COLORS["text_secondary"],
+                )
+        except Exception:
+            pass
+
+    def _on_save_api_key(self):
+        """Salva a API key, provedor e modelo nas configurações."""
+        provider, key, custom_url = self._normalize_llm_provider_inputs()
+        model = self._resolve_selected_model(provider)
+        if not model:
+            self._llm_status.configure(
+                text="❌ Informe um nome de modelo",
+                text_color=COLORS["accent_red"],
+            )
+            self._add_message(
+                "❌ Defina um modelo válido no campo **Nome do modelo** "
+                "(ex: qwen2.5-7b-instruct).",
+                sender="system",
+            )
+            return
+
+        if self.engine and hasattr(self.engine, "config"):
+            self.engine.config.set("openrouter_api_key", key)
+            self.engine.config.set("openrouter_model", model)
+            self.engine.config.set("llm_provider", provider)
+            self.engine.config.set("llm_custom_url", custom_url)
+
+        if self.engine and hasattr(self.engine, "llm_advisor"):
+            self.engine.llm_advisor.set_api_key(key)
+            self.engine.llm_advisor.set_model(model)
+            self.engine.llm_advisor.set_provider(provider, custom_url)
+
+        from core.llm_advisor import API_PROVIDERS
+        prov_name = API_PROVIDERS.get(
+            provider, {}
+        ).get("name", provider)
+
+        if key or provider == "lmstudio":
+            self._llm_status.configure(
+                text=f"🟢 {prov_name} configurado",
+                text_color=COLORS["accent_green"],
+            )
+            self._add_message(
+                f"🤖 LLM configurado: **{prov_name}** / "
+                f"**{model.split('/')[-1]}**\n"
+                "Agora suas perguntas serão respondidas "
+                "pela IA avançada!",
+                sender="system",
+            )
+        else:
+            self._llm_status.configure(
+                text="⚪ Não configurado",
+                text_color=COLORS["text_secondary"],
+            )
+            self._add_message(
+                "🤖 LLM desativado. O chat voltará a usar "
+                "respostas locais.",
+                sender="system",
+            )
+
+    def _on_provider_changed(self, provider: str):
+        """Atualiza modelos e campos quando o provedor muda."""
+        from core.llm_advisor import API_PROVIDERS
+
+        prov_info = API_PROVIDERS.get(
+            provider, API_PROVIDERS["openrouter"]
+        )
+
+        # Mostrar/esconder campo de URL custom
+        if provider in ("custom", "lmstudio"):
+            self._custom_url_frame.pack(
+                fill="x", padx=14, pady=(0, 4),
+                after=self._llm_provider_menu,
+            )
+            self._custom_model_frame.pack(
+                fill="x", padx=14, pady=(0, 4),
+                after=self._llm_model_menu,
+            )
+            current_model = self._llm_model_var.get().strip()
+            current_custom = self._custom_model_entry.get().strip()
+            if (not current_custom and current_model
+                    and not current_model.startswith("(")):
+                self._custom_model_entry.insert(0, current_model)
+            # Preencher URL padrão do LM Studio se estiver vazio
+            if provider == "lmstudio":
+                current_url = self._custom_url_entry.get().strip()
+                if not current_url:
+                    self._custom_url_entry.insert(
+                        0, "http://localhost:1234"
+                    )
+        else:
+            self._custom_url_frame.pack_forget()
+            self._custom_model_frame.pack_forget()
+
+        # Atualizar dropdown de modelos
+        models = prov_info["models"]
+        if models:
+            self._llm_model_menu.configure(values=models)
+            self._llm_model_var.set(prov_info["default_model"])
+        else:
+            self._llm_model_menu.configure(
+                values=["(digite no campo abaixo)"]
+            )
+            self._llm_model_var.set("(digite no campo abaixo)")
+
+        # Atualizar placeholder do API key
+        prefix = prov_info.get("key_prefix", "")
+        if provider == "lmstudio":
+            self._api_key_entry.configure(
+                placeholder_text="opcional (LM Studio local)"
+            )
+        elif prefix:
+            self._api_key_entry.configure(
+                placeholder_text=f"{prefix}..."
+            )
+        else:
+            self._api_key_entry.configure(
+                placeholder_text="cole sua API key aqui..."
+            )
+
+        # Auto-detectar provedor se a key já está preenchida
+        key = self._api_key_entry.get().strip()
+        if key:
+            self._llm_status.configure(
+                text=f"⚡ Provedor: {prov_info['name']}",
+                text_color=COLORS["accent_cyan"],
+            )
+
+    @staticmethod
+    def _detect_provider_from_url(url: str) -> str | None:
+        """Detecta provedor baseado no endpoint informado pelo usuário."""
+        raw = (url or "").strip().lower()
+        if not raw or not raw.startswith(("http://", "https://")):
+            return None
+        if "127.0.0.1:1234" in raw or "localhost:1234" in raw:
+            return "lmstudio"
+        return "custom"
+
+    @staticmethod
+    def _normalize_lmstudio_url(url: str) -> str:
+        """Aceita URL base do LM Studio e converte para endpoint de chat."""
+        raw = (url or "").strip()
+        if not raw:
+            return ""
+
+        low = raw.lower().rstrip("/")
+        if low.endswith("/v1/chat/completions"):
+            return raw.rstrip("/")
+        if low.endswith(":1234"):
+            return raw.rstrip("/") + "/v1/chat/completions"
+        if low.endswith("/v1"):
+            return raw.rstrip("/") + "/chat/completions"
+        return raw
+
+    def _normalize_llm_provider_inputs(self) -> tuple[str, str, str]:
+        """
+        Normaliza entradas de LLM para evitar configuração inválida.
+
+        Casos tratados:
+        - URL colada no campo API key (move para campo URL)
+        - Auto-detecção de provedor por URL (LM Studio/Custom)
+        """
+        provider = self._llm_provider_var.get().strip()
+        key = self._api_key_entry.get().strip()
+        custom_url = self._custom_url_entry.get().strip()
+
+        # Usuário às vezes cola a URL local no campo de API key.
+        if key.startswith(("http://", "https://")):
+            if not custom_url:
+                custom_url = key
+                self._custom_url_entry.delete(0, "end")
+                self._custom_url_entry.insert(0, custom_url)
+            key = ""
+            self._api_key_entry.delete(0, "end")
+
+        detected_provider = self._detect_provider_from_url(custom_url)
+        if detected_provider and detected_provider != provider:
+            provider = detected_provider
+            self._llm_provider_var.set(provider)
+            self._on_provider_changed(provider)
+
+        if provider == "lmstudio" and not custom_url:
+            display_url = "http://localhost:1234"
+            self._custom_url_entry.delete(0, "end")
+            self._custom_url_entry.insert(0, display_url)
+            custom_url = self._normalize_lmstudio_url(display_url)
+        elif provider == "lmstudio":
+            # Mantém campo com URL base; normaliza apenas para uso interno
+            display_url = custom_url.rstrip("/")
+            for _sfx in ("/v1/chat/completions", "/v1"):
+                if display_url.lower().endswith(_sfx):
+                    display_url = display_url[: -len(_sfx)]
+                    self._custom_url_entry.delete(0, "end")
+                    self._custom_url_entry.insert(0, display_url)
+                    break
+            custom_url = self._normalize_lmstudio_url(display_url)
+
+        return provider, key, custom_url
+
+    def _on_test_api(self):
+        """Testa a conexão com a API do provedor selecionado."""
+        provider, key, custom_url = self._normalize_llm_provider_inputs()
+        if not key and provider != "lmstudio":
+            self._llm_status.configure(
+                text="❌ Insira uma API key primeiro",
+                text_color=COLORS["accent_red"],
+            )
+            return
+
+        self._llm_status.configure(
+            text="⏳ Testando...",
+            text_color=COLORS["accent_cyan"],
+        )
+        model = self._resolve_selected_model(provider)
+        if not model:
+            self._llm_status.configure(
+                text="❌ Informe o modelo para testar",
+                text_color=COLORS["accent_red"],
+            )
+            return
+
+        from core.llm_advisor import LLMAdvisor
+        test_advisor = LLMAdvisor(
+            api_key=key, model=model,
+            provider=provider, custom_url=custom_url,
+        )
+
+        def _on_result(success: bool, message: str):
+            self.after(0, self._handle_test_result, success, message)
+
+        test_advisor.test_connection(callback=_on_result)
+
+    def _resolve_selected_model(self, provider: str) -> str:
+        """Resolve modelo escolhido evitando enviar placeholders para a API."""
+        if provider in ("custom", "lmstudio"):
+            custom_model = self._custom_model_entry.get().strip()
+            if custom_model and not custom_model.startswith("("):
+                return custom_model
+            option_model = self._llm_model_var.get().strip()
+            if option_model and not option_model.startswith("("):
+                return option_model
+            if provider == "lmstudio":
+                custom_url = self._custom_url_entry.get().strip()
+                detected = self._fetch_lmstudio_model(custom_url)
+                if detected:
+                    self._custom_model_entry.delete(0, "end")
+                    self._custom_model_entry.insert(0, detected)
+                    return detected
+            return ""
+        return self._llm_model_var.get().strip()
+
+    def _fetch_lmstudio_model(self, chat_url: str) -> str:
+        """Busca automaticamente o primeiro modelo carregado no LM Studio."""
+        import json as json_lib
+
+        normalized = self._normalize_lmstudio_url(chat_url)
+        if not normalized:
+            return ""
+
+        base = normalized.rsplit("/chat/completions", 1)[0]
+        models_url = f"{base}/models"
+        req = urllib.request.Request(models_url, method="GET")
+
+        try:
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                raw = resp.read().decode("utf-8")
+            data = json_lib.loads(raw)
+            models = data.get("data", [])
+            if not models:
+                return ""
+            first = models[0]
+            if isinstance(first, dict):
+                return str(first.get("id", "")).strip()
+            return ""
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+            return ""
+
+    def _handle_test_result(self, success: bool, message: str):
+        """Processa resultado do teste de conexão."""
+        if success:
+            self._llm_status.configure(
+                text="🟢 " + message.replace("✅ ", ""),
+                text_color=COLORS["accent_green"],
+            )
+            self._add_message(
+                f"✅ Conexão com LLM OK!\n{message}",
+                sender="system",
+            )
+        else:
+            self._llm_status.configure(
+                text="🔴 Falha na conexão",
+                text_color=COLORS["accent_red"],
+            )
+            self._add_message(
+                f"❌ Teste falhou: {message}",
+                sender="system",
+            )
+
+    # ─── Pré-carga de conhecimento ─────────────────────
+
+    def _on_seed_knowledge(self):
+        """Carrega a base de conhecimento inicial na IA."""
+        if not self.engine:
+            return
+
+        # Verificar se já tem regras seed
+        stats = self.engine.get_knowledge_stats()
+        if stats.get("seed_rules", 0) > 0:
+            confirm = messagebox.askyesno(
+                "Base já carregada",
+                f"A base de conhecimento já tem {stats['seed_rules']} regras seed.\n"
+                "Deseja recarregar? (regras existentes serão atualizadas)",
+            )
+            if not confirm:
+                return
+
+        self._add_message(
+            "⏳ Carregando base de conhecimento inicial...\n"
+            "Isso vai dar à IA uma base sobre como ajustar setups "
+            "de GT3, LMP2 e Hypercar.",
+            sender="system",
+        )
+
+        # Executar seed
+        result = self.engine.seed_knowledge_base()
+        added = result.get("rules_added", 0)
+        skipped = result.get("rules_skipped", 0)
+
+        self._add_message(
+            f"✅ **Base de conhecimento carregada!**\n\n"
+            f"📝 **{added}** regras adicionadas\n"
+            f"⏭️ **{skipped}** regras já existentes (atualizadas)\n\n"
+            f"A IA agora sabe como reagir a:\n"
+            f"• Understeer/Oversteer → ajustes de barras e asa\n"
+            f"• Temperatura dos pneus → camber e pressão\n"
+            f"• Bottoming → ride height e molas\n"
+            f"• Chuva → molas macias + mais asa + altura\n"
+            f"• Zebras → fast bump mais suave\n"
+            f"• Frenagem → bias e dutos de freio\n\n"
+            f"Regras específicas para GT3, LMP2 e Hypercar incluídas.\n"
+            f"Quanto mais voltas você der, mais ela aprende sobre **seu estilo**!",
+            sender="ai",
+        )
+
+    def _on_show_stats(self):
+        """Mostra estatísticas atuais da IA no chat."""
+        if not self.engine:
+            return
+
+        stats = self.engine.get_knowledge_stats()
+        conf = stats["confidence"]
+
+        # Barra visual de confiança
+        filled = int(conf * 10)
+        bar = "█" * filled + "░" * (10 - filled)
+
+        self._add_message(
+            f"📊 **Estatísticas da IA**\n\n"
+            f"🧠 Regras aprendidas: **{stats['total_rules']}**\n"
+            f"📝 Regras seedadas: **{stats['seed_rules']}**\n"
+            f"✅ Regras efetivas (>60%): **{stats['effective_rules']}**\n"
+            f"📦 Amostras de treino: **{stats['total_samples']}**\n"
+            f"🏎️ Classes cobertas: **{stats['classes_covered']}**\n"
+            f"📈 Confiança: [{bar}] **{conf*100:.0f}%**",
+            sender="ai",
+        )
+
+    def _on_learn_from_setups(self):
+        """Escaneia todos os .svm disponíveis para aprendizagem."""
+        if not self.engine:
+            return
+
+        self._add_message(_("msg_scanning_setups"), sender="system")
+
+        try:
+            result = self.engine.learn_from_all_setups()
+            self._add_message(
+                f"✅ **Biblioteca de setups atualizada!**\n\n"
+                f"📁 Pistas encontradas: **{result['tracks']}**\n"
+                f"📄 Setups escaneados: **{result['scanned']}**\n"
+                f"🆕 Setups processados: **{result['new']}**\n\n"
+                f"A IA agora pode comparar setups e aprender padrões "
+                f"para cada pista. Ao entrar na pista, os setups "
+                f"disponíveis serão usados como referência.",
+                sender="ai",
+            )
+        except Exception as e:
+            self._add_message(f"Erro ao escanear setups: {e}", sender="system")
+
+    def _on_show_memory(self):
+        """Mostra a memória persistente do carro×pista atual."""
+        if not self.engine:
+            return
+
+        summary = self.engine.get_knowledge_summary()
+
+        msg = f"🧠 **Memória Persistente da IA**\n\n"
+        msg += f"📂 Setups na biblioteca: **{summary['library_setups']}**\n"
+        msg += f"📦 Amostras de treino: **{summary['total_samples']}**\n\n"
+
+        mem = summary.get("active_memory")
+        if mem:
+            msg += f"**Carro × Pista atual:**\n"
+            msg += f"  📊 Sessões anteriores: **{mem['sessions']}**\n"
+            msg += f"  🏁 Voltas registradas: **{mem['laps']}**\n"
+            if mem.get("best_lap"):
+                msg += f"  🏆 Melhor volta: **{mem['best_lap']:.3f}s**\n"
+            conf = mem.get("confidence", 0)
+            filled = int(conf * 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            msg += f"  📈 Confiança memória: [{bar}] **{conf*100:.0f}%**\n"
+        else:
+            msg += "ℹ️ Nenhuma memória para o carro × pista atual.\n"
+            msg += "Entre na pista e complete voltas para a IA começar a lembrar."
+
+        self._add_message(msg, sender="ai")
+    
+    def _on_fuel_changed(self, event=None):
+        if self.engine.current_svm:
+            try:
+                fuel_liters = float(self._fuel_entry.get())
+                self.engine.current_svm.set_fuel_liters(fuel_liters)
+            except ValueError:
+                # Ignorar erro de input inválido temporariamente, será tratado no save
+                pass
