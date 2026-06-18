@@ -41,7 +41,7 @@ class MainApp(ctk.CTk):
         self._logo_path = Path(__file__).parent.parent / "assets" / "logo.png"
         self._ico_path = Path(__file__).parent.parent / "assets" / "logo.ico"
         self._logo_images = {}  # cache de imagens PIL
-        self._logo_tk = {}      # cache de ImageTk
+        self._logo_tk = {}  # cache de ImageTk
 
         # Definir ícone .ico para Windows (taskbar + alt-tab + barra de título)
         if self._ico_path.exists():
@@ -54,6 +54,7 @@ class MainApp(ctk.CTk):
         if self._logo_path.exists():
             try:
                 from PIL import Image, ImageTk
+
                 for size in (16, 32, 48, 128):
                     img = Image.open(self._logo_path)
                     img = img.resize((size, size), Image.LANCZOS)
@@ -108,7 +109,7 @@ class MainApp(ctk.CTk):
         import tkinter as tk
 
         # Limpar menu anterior se existir
-        if hasattr(self, '_menubar') and self._menubar:
+        if hasattr(self, "_menubar") and self._menubar:
             self._menubar.destroy()
 
         self._menubar = tk.Menu(self, tearoff=0)
@@ -128,11 +129,11 @@ class MainApp(ctk.CTk):
         # ── Menu Configurações ──
         settings_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=_("settings"), menu=settings_menu)
-        
+
         # Submenu de idiomas
         lang_menu = tk.Menu(settings_menu, tearoff=0)
         settings_menu.add_cascade(label=f"🌐 {_('language')}", menu=lang_menu)
-        
+
         current_lang = I18n.get_language()
         for code, name in AVAILABLE_LANGUAGES.items():
             check = "✓ " if code == current_lang else "   "
@@ -154,11 +155,13 @@ class MainApp(ctk.CTk):
     def _build_header(self):
         """Cabeçalho moderno com nome, indicadores e clima."""
         # Limpar header anterior se existir
-        if hasattr(self, '_header_frame') and self._header_frame:
+        if hasattr(self, "_header_frame") and self._header_frame:
             self._header_frame.destroy()
 
         self._header_frame = ctk.CTkFrame(
-            self, height=60, corner_radius=0,
+            self,
+            height=60,
+            corner_radius=0,
             fg_color=COLORS["bg_card"],
             border_width=0,
         )
@@ -174,6 +177,7 @@ class MainApp(ctk.CTk):
         if self._logo_path.exists():
             try:
                 from PIL import Image
+
                 if 32 not in self._logo_images:
                     img = Image.open(self._logo_path)
                     img = img.resize((32, 32), Image.LANCZOS)
@@ -184,20 +188,24 @@ class MainApp(ctk.CTk):
                     size=(32, 32),
                 )
                 ctk.CTkLabel(
-                    title_frame, image=header_img, text="",
+                    title_frame,
+                    image=header_img,
+                    text="",
                 ).pack(side="left", padx=(0, 8))
                 self._header_logo = header_img  # manter referência
             except Exception as e:
                 logger.debug("Erro ao colocar logo no header: %s", e)
 
         ctk.CTkLabel(
-            title_frame, text=APP_NAME,
+            title_frame,
+            text=APP_NAME,
             font=("Arial", 18, "bold"),
             text_color=COLORS["accent_cyan"],
         ).pack(side="left")
 
         ctk.CTkLabel(
-            title_frame, text=f"  v{APP_VERSION}",
+            title_frame,
+            text=f"  v{APP_VERSION}",
             font=("Arial", 10),
             text_color=COLORS["text_secondary"],
         ).pack(side="left", padx=(4, 0), anchor="s", pady=(0, 2))
@@ -222,11 +230,12 @@ class MainApp(ctk.CTk):
     def _build_tabs(self):
         """Constrói o sistema de abas reorganizado."""
         # Limpar tabs anteriores se existirem
-        if hasattr(self, 'tabview') and self.tabview:
+        if hasattr(self, "tabview") and self.tabview:
             self.tabview.destroy()
 
         self.tabview = ctk.CTkTabview(
-            self, corner_radius=10,
+            self,
+            corner_radius=10,
             segmented_button_fg_color=COLORS["bg_card"],
             segmented_button_selected_color=COLORS["accent_blue"],
             segmented_button_selected_hover_color="#3588b8",
@@ -260,13 +269,15 @@ class MainApp(ctk.CTk):
     def _build_footer(self):
         """Barra de status moderna no rodapé."""
         import webbrowser
-        
+
         # Limpar footer anterior se existir
-        if hasattr(self, '_footer_frame') and self._footer_frame:
+        if hasattr(self, "_footer_frame") and self._footer_frame:
             self._footer_frame.destroy()
 
         self._footer_frame = ctk.CTkFrame(
-            self, height=34, corner_radius=0,
+            self,
+            height=34,
+            corner_radius=0,
             fg_color=COLORS["bg_card"],
         )
         self._footer_frame.pack(fill="x", padx=0, pady=0)
@@ -274,11 +285,13 @@ class MainApp(ctk.CTk):
         footer = self._footer_frame
 
         self.status_label = ctk.CTkLabel(
-            footer, text=_("waiting_connection"),
-            font=("JetBrains Mono", 10), text_color=COLORS["text_secondary"],
+            footer,
+            text=_("waiting_connection"),
+            font=("JetBrains Mono", 10),
+            text_color=COLORS["text_secondary"],
         )
         self.status_label.pack(side="left", padx=12)
-        
+
         # Discord link
         discord_btn = ctk.CTkButton(
             footer,
@@ -294,15 +307,19 @@ class MainApp(ctk.CTk):
         discord_btn.pack(side="left", padx=(10, 0))
 
         self.car_label = ctk.CTkLabel(
-            footer, text="",
-            font=("JetBrains Mono", 10), text_color=COLORS["text_secondary"],
+            footer,
+            text="",
+            font=("JetBrains Mono", 10),
+            text_color=COLORS["text_secondary"],
         )
         self.car_label.pack(side="right", padx=12)
 
         # Indicador do setup base
         self._base_label = ctk.CTkLabel(
-            footer, text=_("no_setup_loaded"),
-            font=("JetBrains Mono", 10), text_color=COLORS["text_secondary"],
+            footer,
+            text=_("no_setup_loaded"),
+            font=("JetBrains Mono", 10),
+            text_color=COLORS["text_secondary"],
         )
         self._base_label.pack(side="right", padx=(0, 20))
 
@@ -314,10 +331,10 @@ class MainApp(ctk.CTk):
         """Chamado pelo tab_setup quando um setup base é carregado."""
         name = Path(filepath).name
         self._base_label.configure(
-            text=f"📄 {_("setup_base")}: {name}",
+            text=f"📄 {_('setup_base')}: {name}",
             text_color=COLORS["accent_cyan"],
         )
-        self.set_status(f"{_("setup_base")}: {name}", "#00cc44")
+        self.set_status(f"{_('setup_base')}: {name}", "#00cc44")
 
     def _on_base_cleared(self):
         """Chamado pelo tab_setup quando o base é limpo."""
@@ -355,9 +372,7 @@ class MainApp(ctk.CTk):
         # Notificação na barra de status
         lap = suggestion.get("lap", "?")
         source = suggestion.get("source", "IA")
-        self.set_status(
-            f"🤖 Auto-sugestão (volta {lap}, via {source})", "#00cc44"
-        )
+        self.set_status(f"🤖 Auto-sugestão (volta {lap}, via {source})", "#00cc44")
 
         # Mudar para aba Setup se não estiver nela
         current_tab = self.tabview.get()
@@ -395,10 +410,10 @@ class MainApp(ctk.CTk):
         if self.engine and hasattr(self.engine, "config"):
             self.engine.config.set("language", lang_code)
             self.engine.config.save()
-        
+
         # Atualizar idioma no sistema i18n
         I18n.set_language(lang_code)
-        
+
         # Reconstruir a interface com o novo idioma
         self._refresh_ui()
 
@@ -409,10 +424,10 @@ class MainApp(ctk.CTk):
         self._build_header()
         self._build_tabs()
         self._build_footer()
-        
+
         # Atualizar título da janela
         self.title(f"{APP_NAME} v{APP_VERSION}")
-        
+
         # Re-registrar callbacks se engine existe
         if self.engine:
             self.engine._on_auto_suggestion_callback = self._on_auto_suggestion
@@ -438,6 +453,7 @@ class MainApp(ctk.CTk):
         if self._logo_path.exists():
             try:
                 from PIL import Image
+
                 if 128 not in self._logo_images:
                     img = Image.open(self._logo_path)
                     img = img.resize((128, 128), Image.LANCZOS)
@@ -448,20 +464,24 @@ class MainApp(ctk.CTk):
                     size=(128, 128),
                 )
                 ctk.CTkLabel(
-                    about_win, image=about_logo, text="",
+                    about_win,
+                    image=about_logo,
+                    text="",
                 ).pack(pady=(20, 10))
                 self._about_logo = about_logo  # manter referência
             except Exception:
                 pass
 
         ctk.CTkLabel(
-            about_win, text=f"{APP_NAME}",
+            about_win,
+            text=f"{APP_NAME}",
             font=("Arial", 18, "bold"),
             text_color=COLORS["accent_cyan"],
         ).pack()
 
         ctk.CTkLabel(
-            about_win, text=f"v{APP_VERSION}",
+            about_win,
+            text=f"v{APP_VERSION}",
             font=("Arial", 12),
             text_color=COLORS["text_secondary"],
         ).pack(pady=(0, 10))
@@ -469,15 +489,17 @@ class MainApp(ctk.CTk):
         ctk.CTkLabel(
             about_win,
             text="Engenheiro Virtual para LMU/rFactor 2\n"
-                 "Inteligência Artificial + Heurísticas\n"
-                 "para otimização de setups de corrida.",
+            "Inteligência Artificial + Heurísticas\n"
+            "para otimização de setups de corrida.",
             font=("Arial", 11),
             text_color=COLORS["text_primary"],
             justify="center",
         ).pack(pady=(0, 15))
 
         ctk.CTkButton(
-            about_win, text="Fechar", width=100,
+            about_win,
+            text="Fechar",
+            width=100,
             command=about_win.destroy,
         ).pack()
 
@@ -523,7 +545,7 @@ class MainApp(ctk.CTk):
                 if car_info:
                     self.car_label.configure(
                         text=f"{car_info.get('vehicle_name', '')} @ "
-                             f"{car_info.get('track_name', '')}"
+                        f"{car_info.get('track_name', '')}"
                     )
                     self.status_label.configure(
                         text=f"LMU {_('connected')} ✓",
@@ -594,7 +616,8 @@ class MainApp(ctk.CTk):
             menu = pystray.Menu(
                 pystray.MenuItem(
                     f"{APP_NAME} v{APP_VERSION}",
-                    lambda: None, enabled=False,
+                    lambda: None,
+                    enabled=False,
                 ),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Abrir", self._tray_show),
@@ -602,12 +625,17 @@ class MainApp(ctk.CTk):
             )
 
             self._tray_icon = pystray.Icon(
-                APP_NAME, tray_img, f"{APP_NAME}", menu,
+                APP_NAME,
+                tray_img,
+                f"{APP_NAME}",
+                menu,
             )
 
             import threading
+
             tray_thread = threading.Thread(
-                target=self._tray_icon.run, daemon=True,
+                target=self._tray_icon.run,
+                daemon=True,
             )
             tray_thread.start()
             logger.info("Ícone na bandeja do sistema ativo.")
