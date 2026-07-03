@@ -201,7 +201,7 @@ This is **normal and expected**. At the beginning, the system relies more on heu
 
 Join our community for support, questions, and updates:
 
-**[👉 [https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)](https://discord.gg/6sqNmZkJKR)**
+**[👉 [(https://discord.gg/jJSVvKbFxs)](https://discord.gg/6sqNmZkJKR)**
 
 ---
 
