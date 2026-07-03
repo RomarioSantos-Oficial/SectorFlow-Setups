@@ -303,7 +303,7 @@ Este projeto está em **beta**. Funcionalidades podem mudar, bugs podem existir,
 
 Join our Discord for support, questions, and news:
 
-**[https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+**[DISCORD](https://discord.gg/6sqNmZkJKR)**
 
 ## Project Status
 
@@ -515,7 +515,7 @@ Ferramenta para Le Mans Ultimate focada em leitura de telemetria, sugestoes de s
 
 Entre no nosso Discord para suporte, duvidas e novidades:
 
-**[https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+**[[DISCORD](https://discord.gg/jJSVvKbFxs)**
 
 ## Estado do Projeto
 
