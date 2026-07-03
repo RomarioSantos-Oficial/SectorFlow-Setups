@@ -5,7 +5,7 @@
 ### 🏁 Exclusively for Le Mans Ultimate — Le Mans Ultimate exclusivo
 
 [![Download .EXE](https://img.shields.io/badge/⬇️%20Download%20.EXE-v1.0--beta-brightgreen?style=for-the-badge)](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord)][([(https://discord.gg/6sqNmZkJKR)](https://discord.com/invite/6sqNmZkJKR)](https://discord.gg/6sqNmZkJKR)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord)][(https://discord.com/invite/6sqNmZkJKR)](https://discord.gg/6sqNmZkJKR)
 [![Status](https://img.shields.io/badge/Status-Beta-orange?style=for-the-badge)]()
 
 > **EN** — AI-powered setup assistant that reads live telemetry and suggests car configurations for **Le Mans Ultimate** only.  
