@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Garantir que o diretório do projeto está no path
@@ -34,6 +35,7 @@ from config import (
 from core.brain import ModelManager, deltas_to_svm, filter_deltas_by_class, TORCH_AVAILABLE
 from core.heuristics import analyze_telemetry_advanced, merge_suggestions, apply_driver_profile
 from core.knowledge_distiller import KnowledgeDistiller
+from core.fuel_strategy import estimate_fuel_consumption
 from core.llm_advisor import LLMAdvisor
 from core.normalizer import FeatureNormalizer
 from core.reward import compute_reward
@@ -124,6 +126,23 @@ class VirtualEngineer:
         # Banco de dados
         self.db = DatabaseManager(str(DB_FILE))
         logger.info("Banco de dados inicializado: %s", DB_FILE)
+
+        # Carregar memória do último carro/pista conhecido ao iniciar (se configurado)
+        try:
+            last_car = self.config.get("last_car", "") or ""
+            last_track = self.config.get("last_track", "") or ""
+            if last_car and last_track:
+                try:
+                    cid = self.db.get_or_create_car(last_car, "")
+                    tid = self.db.get_or_create_track(last_track)
+                    combo = (cid, tid)
+                    self._load_session_memory(cid, tid)
+                    self._memory_loaded_for = combo
+                    logger.info("Memória carregada no startup para %s@%s", last_car, last_track)
+                except Exception as e:
+                    logger.debug("Não foi possível carregar memória do último carro/pista: %s", e)
+        except Exception:
+            pass
 
         # IA
         self.ia_enabled = TORCH_AVAILABLE
@@ -217,6 +236,28 @@ class VirtualEngineer:
         self._auto_connect_thread = threading.Thread(
             target=self._auto_connect_loop, daemon=True
         )
+        # Iniciar watcher dinâmico de carro/pista para carregar memória assim que detectado
+        def _car_track_watcher():
+            while True:
+                try:
+                    ci = self.get_car_info()
+                    if ci and ci.get("vehicle_name") and ci.get("track_name"):
+                        try:
+                            cid = self.db.get_or_create_car(ci.get("vehicle_name"), ci.get("vehicle_class", ""))
+                            tid = self.db.get_or_create_track(ci.get("track_name"))
+                            combo = (cid, tid)
+                            if self._memory_loaded_for != combo:
+                                self._load_session_memory(cid, tid)
+                                self._memory_loaded_for = combo
+                                logger.info("Memória dinâmica carregada para %s@%s", ci.get("vehicle_name"), ci.get("track_name"))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                time.sleep(1)
+
+        self._car_track_watcher_thread = threading.Thread(target=_car_track_watcher, daemon=True)
+        self._car_track_watcher_thread.start()
         self._auto_connect_thread.start()
 
         # Alimentar base de conhecimento inicial (assíncrono)
@@ -273,6 +314,41 @@ class VirtualEngineer:
         with self._state_lock:
             self._game_connected = True
         logger.info("Conectado ao jogo via Shared Memory.")
+        # Carregar memória imediatamente se configurado
+        try:
+            if self.config.get("memory_apply_on_connect", True):
+                # Tentar obter info do carro imediatamente
+                car_info = self.get_car_info()
+                if car_info and car_info.get("vehicle_name") and car_info.get("track_name"):
+                    car_id = self.db.get_or_create_car(car_info.get("vehicle_name"), car_info.get("vehicle_class", ""))
+                    track_id = self.db.get_or_create_track(car_info.get("track_name"))
+                    combo = (car_id, track_id)
+                    if self._memory_loaded_for != combo:
+                        self._load_session_memory(car_id, track_id)
+                        self._memory_loaded_for = combo
+                else:
+                    # Se ainda não há info, criar thread que espera curto período e tenta novamente
+                    def _deferred_load():
+                        attempts = 0
+                        while attempts < 10 and not self._memory_loaded_for and self._game_connected:
+                            ci = self.get_car_info()
+                            if ci and ci.get("vehicle_name") and ci.get("track_name"):
+                                try:
+                                    cid = self.db.get_or_create_car(ci.get("vehicle_name"), ci.get("vehicle_class", ""))
+                                    tid = self.db.get_or_create_track(ci.get("track_name"))
+                                    combo2 = (cid, tid)
+                                    if self._memory_loaded_for != combo2:
+                                        self._load_session_memory(cid, tid)
+                                        self._memory_loaded_for = combo2
+                                        return
+                                except Exception:
+                                    pass
+                            attempts += 1
+                            time.sleep(1)
+                    t = threading.Thread(target=_deferred_load, daemon=True)
+                    t.start()
+        except Exception as e:
+            logger.debug("Erro ao tentar carregar memória na conexão: %s", e)
 
     def is_game_connected(self) -> bool:
         with self._state_lock:
@@ -861,30 +937,21 @@ class VirtualEngineer:
                                 climate: str = "seco") -> Path:
         """
         Cria um NOVO .svm a partir do setup base.
-        O arquivo base NUNCA é modificado."""
+        O arquivo base NUNCA é modificado.
+        """
+        if not self._base_svm:
+            raise ValueError("Nenhum setup base carregado.")
 
-        try:
-            if len(models) >= 3 and self.ia_enabled and self.model_manager is not None:
-                self.model_manager.create_shared_model(car_class, models)
-        except Exception as e:
-            logger.debug("Erro na operação anterior: %s", e)
-
-    def start_knowledge_distillation(self, car_class: str = ""):
-        """Inicia o processo de destilação de conhecimento para a classe de carro."""
-        if not self.ia_enabled or self.model_manager is None:
-            return
-        # Parsear uma CÓPIA FRESCA do arquivo base (não modifica o original)
         new_svm = parse_svm(self._base_svm.filepath)
 
-        # Calcular deltas conforme modo
-        deltas = {}
         if mode == "ia":
             deltas, _ = self.request_suggestion()
         elif mode == "heuristic":
             deltas, _ = self.request_heuristic_suggestion()
-        # mode == "copy" → deltas vazio, cópia exata
+        else:
+            deltas = {}
+            mode = "copy"
 
-        # Aplicar deltas climáticos
         climate_deltas = self._get_climate_deltas(climate)
         for key, val in climate_deltas.items():
             deltas[key] = deltas.get(key, 0) + val
@@ -892,24 +959,21 @@ class VirtualEngineer:
         if deltas:
             apply_deltas(new_svm, deltas)
 
-        # Gerar nome SECTORFLOW
-        new_path = self._generate_sectorflow_path(climate=climate)
-
-        # Escrever campo Notes= com metadados automáticos
         from data.svm_parser import write_notes_field
         from datetime import datetime as _dt2
-        _clima_label = {"seco": "Seco", "chuva_leve": "Chuva Leve",
-                        "chuva_forte": "Chuva Forte", "misto": "Misto",
-                        "mescla": "Mescla 50/50"}.get(climate, climate)
+        _clima_label = {
+            "seco": "Seco", "chuva_leve": "Chuva Leve",
+            "chuva_forte": "Chuva Forte", "misto": "Misto",
+            "mescla": "Mescla 50/50",
+        }.get(climate, climate)
         _auto_note = (
             f"SectorFlow {mode.upper()} setup. Clima: {_clima_label}. "
             f"Carro: {self._car_name or 'desconhecido'}. "
             f"Pista: {self._track_name or 'desconhecida'}. "
-            f"Gerado: {_dt2.now().strftime('%d/%m/%Y %H:%M')}."
-        )
+            f"Gerado: {_dt2.now().strftime('%d/%m/%Y %H:%M')}.")
         write_notes_field(new_svm, _auto_note)
 
-        # Salvar — nunca sobrescreve, cria novo
+        new_path = self._generate_setorflow_path(climate=climate)
         save_svm(new_svm, output_path=new_path, backup=False)
 
         logger.info("Novo setup criado a partir do base: %s", new_path.name)
@@ -1176,21 +1240,6 @@ class VirtualEngineer:
         except Exception as e:
             logger.debug("Erro ao criar shared model: %s", e)
 
-    # <--- Note que o 'def' abaixo deve estar alinhado com o 'def' lá de cima (da função anterior)
-    def start_knowledge_distillation(self, car_class: str = ""):
-        """Inicia o processo de destilação de conhecimento para a classe de carro."""
-        if not self.ia_enabled or self.model_manager is None:
-            return
-
-        if not car_class and hasattr(self, "_last_car_class"):
-            car_class = getattr(self, "_last_car_class", "")
-
-        if not car_class:
-            logger.warning("Não foi possível iniciar destilação: car_class vazio.")
-            return
-
-        # Resto do código da função...
-
     # ─────────────────────────────────────────────────────
     # Calculadora de Estratégia Quali / Corrida
     # ─────────────────────────────────────────────────────
@@ -1308,26 +1357,9 @@ class VirtualEngineer:
         fuel_per_lap = 0.0
         fuel_capacity = 0.0
 
-        # Consumo por volta: dados live
-        fuel_consumptions = []
-        for i in range(1, len(history)):
-            # B3: ignorar voltas inválidas no cálculo de consumo
-            if not history[i - 1].get("valid", True) or not history[i].get("valid", True):
-                continue
-            prev_feat = history[i - 1].get("features", {})
-            curr_feat = history[i].get("features", {})
-            prev_fuel = prev_feat.get("fuel", 0) or prev_feat.get("fuel_start", 0)
-            curr_fuel = curr_feat.get("fuel", 0) or curr_feat.get("fuel_start", 0)
-            if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel:
-                consumption = prev_fuel - curr_fuel
-                if 0.1 < consumption < 20:
-                    fuel_consumptions.append(consumption)
-
-        if fuel_consumptions:
-            # G3.4: usar as últimas 3 medições para ser mais responsivo a
-            # mudanças recentes de ritmo (ex: novo setup, condições de pista)
-            recent = fuel_consumptions[-3:] if len(fuel_consumptions) >= 3 else fuel_consumptions
-            fuel_per_lap = sum(recent) / len(recent)
+        fuel_estimate = estimate_fuel_consumption(history, recent_window=3)
+        if fuel_estimate["fuel_per_lap"] > 0:
+            fuel_per_lap = fuel_estimate["fuel_per_lap"]
         elif self._car_name and self._track_name:
             # Fallback: banco de dados
             try:
@@ -1507,28 +1539,15 @@ class VirtualEngineer:
         except Exception:
             pass
 
-        # Consumo médio por volta a partir do histórico (B3: apenas voltas válidas)
-        fuel_consumptions = []
+        # Consumo médio por volta a partir do histórico (apenas voltas válidas e sem pit laps)
         if len(self._lap_history) >= 2:
-            for i in range(1, len(self._lap_history)):
-                prev = self._lap_history[i - 1]
-                curr = self._lap_history[i]
-                # B3: ignorar voltas inválidas (ex: bandeira amarela, pit lap)
-                if not prev.get("valid", True) or not curr.get("valid", True):
-                    continue
-                prev_fuel = prev.get("features", {}).get("fuel", 0)
-                curr_fuel = curr.get("features", {}).get("fuel", 0)
-                if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel:
-                    consumption = prev_fuel - curr_fuel
-                    if 0.1 < consumption < 20:  # Filtro de sanidade
-                        fuel_consumptions.append(consumption)
+            fuel_estimate = estimate_fuel_consumption(self._lap_history, recent_window=3)
+            avg_consumption = fuel_estimate["fuel_per_lap"]
+            if avg_consumption > 0:
+                result["fuel_per_lap"] = avg_consumption
 
-        if fuel_consumptions:
-            avg_consumption = sum(fuel_consumptions) / len(fuel_consumptions)
-            result["fuel_per_lap"] = avg_consumption
-
-            if avg_consumption > 0 and result["fuel_current"] > 0:
-                result["laps_remaining"] = int(result["fuel_current"] / avg_consumption)
+                if avg_consumption > 0 and result["fuel_current"] > 0:
+                    result["laps_remaining"] = int(result["fuel_current"] / avg_consumption)
 
             # Fuel Ratio = litros/volta normalizado pela capacidade
             if result["fuel_capacity"] > 0:
@@ -1720,6 +1739,14 @@ class VirtualEngineer:
                     "fuel_at_start": 0,
                     "fuel_used": 0,
                 }
+                fuel_context = "normal"
+                try:
+                    if self._vehicle and hasattr(self._vehicle, "in_pits") and self._vehicle.in_pits():
+                        fuel_context = "pit"
+                    elif self._vehicle and hasattr(self._vehicle, "in_garage") and self._vehicle.in_garage():
+                        fuel_context = "pit"
+                except Exception:
+                    fuel_context = "normal"
                 # Mapear features nomeadas para campos da tabela laps
                 feature_dict = self._features_to_dict(features)
 
@@ -1731,7 +1758,7 @@ class VirtualEngineer:
                         prev_feat = self._lap_history[-1].get("features", {})
                         prev_fuel = prev_feat.get("fuel", 0.0) or prev_feat.get("fuel_start", 0.0)
 
-                if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel:
+                if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel and fuel_context == "normal":
                     lap_data["fuel_at_start"] = float(prev_fuel)
                     lap_data["fuel_used"] = float(prev_fuel - curr_fuel)
                 elif curr_fuel > 0:
@@ -1768,6 +1795,7 @@ class VirtualEngineer:
                     "features": feature_dict,
                     "grip": feature_dict.get("grip_avg", 0.5),
                     "rain": feature_dict.get("raining", 0.0),
+                    "fuel_context": fuel_context,
                 })
                 # Manter últimas 30 voltas
                 if len(self._lap_history) > 30:
@@ -2466,23 +2494,35 @@ class VirtualEngineer:
         if self._active_memory:
             memory_conf = self._active_memory.get("memory_confidence", 0)
 
-        if memory_conf < 0.1:
-            return deltas
+        threshold = self.config.get("memory_apply_threshold", 0.05)
+        ai_conf = self.ai_confidence()
+
+        if memory_conf < threshold:
+            logger.debug("Memória disponível mas abaixo do limiar (%.3f). mem_conf=%.3f threshold=%.3f",
+                         memory_conf, memory_conf, threshold)
+            # permitir aplicação fraca em caso de necessidade, mas com peso reduzido
 
         # Peso da memória: começa em 0.5 (50%) e diminui conforme a IA ganha confiança
-        ai_conf = self.ai_confidence()
-        memory_weight = max(0.1, 0.5 * (1.0 - ai_conf) * memory_conf)
+        memory_weight = max(0.05, 0.5 * (1.0 - ai_conf) * memory_conf)
 
+        applied = []
         for param, mem_val in self._memory_optimal_deltas.items():
             current = deltas.get(param, 0)
             if current == 0 and mem_val != 0:
                 # IA não tem opinião → usar memória
                 deltas[param] = mem_val
+                applied.append((param, 'filled', mem_val))
             elif current != 0 and mem_val != 0:
                 # Blend: IA + memória
                 blended = round(current * (1 - memory_weight) + mem_val * memory_weight)
                 if blended != 0:
                     deltas[param] = blended
+                    applied.append((param, 'blended', blended))
+
+        if applied:
+            logger.info("Memória aplicada: %d parâmetros (peso=%.3f, mem_conf=%.3f, ai_conf=%.3f)",
+                        len(applied), memory_weight, memory_conf, ai_conf)
+            logger.debug("Parâmetros aplicados: %s", applied)
 
         return deltas
 
@@ -3376,6 +3416,7 @@ class VirtualEngineer:
                 "total_laps_driven": len(self._lap_history),
                 "last_deltas": self._last_display_deltas or {},
                 "last_display_deltas": self._last_display_deltas or {},
+                "fuel_context": self._lap_history[-1].get("fuel_context", "normal") if self._lap_history else "normal",
             }
 
             # Setup base

@@ -216,6 +216,8 @@ class AppConfig:
         "transfer_learning": True,    # Usar Transfer Learning automático
         "compound_as_input": True,    # Compound de pneu como input da rede
         "dark_mode": True,            # Tema escuro
+        "memory_apply_threshold": 0.05, # Limiar mínimo para aplicar memória (0.0-1.0)
+        "memory_apply_on_connect": True, # Carregar/aplicar memória logo na conexão ao jogo
         "language": "pt-br",          # Idioma
         "driver_name": "Piloto",      # Nome do perfil do piloto
         "last_car": "",
