@@ -203,23 +203,23 @@ class AppConfig:
 
     _defaults = {
         "lmu_path": "",
-        "setup_level": "basic",       # "basic", "intermediate", "advanced"
-        "learning_laps": 10,          # Voltas mínimas antes da IA sugerir
-        "auto_backup": True,          # Backup automático do .svm ao modificar
-        "auto_backup_db": True,       # Backup do banco ao abrir o programa
-        "telemetry_hz": 10,           # Frequência de leitura da telemetria (Hz)
-        "training_interval": 5,       # Treinar IA a cada N voltas
-        "training_batch_size": 16,    # Tamanho do batch de treinamento
+        "setup_level": "basic",  # "basic", "intermediate", "advanced"
+        "learning_laps": 10,  # Voltas mínimas antes da IA sugerir
+        "auto_backup": True,  # Backup automático do .svm ao modificar
+        "auto_backup_db": True,  # Backup do banco ao abrir o programa
+        "telemetry_hz": 10,  # Frequência de leitura da telemetria (Hz)
+        "training_interval": 5,  # Treinar IA a cada N voltas
+        "training_batch_size": 16,  # Tamanho do batch de treinamento
         "training_epochs_online": 3,  # Épocas por treino online
-        "training_epochs_offline": 50,# Épocas por treino offline
-        "max_delta_per_adjust": 3,    # Máximo ±N índices por ajuste
-        "transfer_learning": True,    # Usar Transfer Learning automático
-        "compound_as_input": True,    # Compound de pneu como input da rede
-        "dark_mode": True,            # Tema escuro
-        "memory_apply_threshold": 0.05, # Limiar mínimo para aplicar memória (0.0-1.0)
-        "memory_apply_on_connect": True, # Carregar/aplicar memória logo na conexão ao jogo
-        "language": "pt-br",          # Idioma
-        "driver_name": "Piloto",      # Nome do perfil do piloto
+        "training_epochs_offline": 50,  # Épocas por treino offline
+        "max_delta_per_adjust": 3,  # Máximo ±N índices por ajuste
+        "transfer_learning": True,  # Usar Transfer Learning automático
+        "compound_as_input": True,  # Compound de pneu como input da rede
+        "dark_mode": True,  # Tema escuro
+        "memory_apply_threshold": 0.05,  # Limiar mínimo para aplicar memória (0.0-1.0)
+        "memory_apply_on_connect": True,  # Carregar/aplicar memória logo na conexão ao jogo
+        "language": "pt-br",  # Idioma
+        "driver_name": "Piloto",  # Nome do perfil do piloto
         "last_car": "",
         "last_track": "",
         "window_width": 1280,
@@ -237,8 +237,15 @@ class AppConfig:
 
     def _ensure_dirs(self):
         """Cria os diretórios necessários se não existirem."""
-        for d in (USER_DATA_DIR, DB_DIR, MODELS_DIR, SHARED_MODELS_DIR,
-                  PROFILES_DIR, BACKUPS_DIR, LOGS_DIR):
+        for d in (
+            USER_DATA_DIR,
+            DB_DIR,
+            MODELS_DIR,
+            SHARED_MODELS_DIR,
+            PROFILES_DIR,
+            BACKUPS_DIR,
+            LOGS_DIR,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
     def load(self):

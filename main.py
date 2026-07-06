@@ -32,8 +32,17 @@ from config import (
     AppConfig,
     detect_lmu_path,
 )
-from core.brain import ModelManager, deltas_to_svm, filter_deltas_by_class, TORCH_AVAILABLE
-from core.heuristics import analyze_telemetry_advanced, merge_suggestions, apply_driver_profile
+from core.brain import (
+    ModelManager,
+    deltas_to_svm,
+    filter_deltas_by_class,
+    TORCH_AVAILABLE,
+)
+from core.heuristics import (
+    analyze_telemetry_advanced,
+    merge_suggestions,
+    apply_driver_profile,
+)
 from core.knowledge_distiller import KnowledgeDistiller
 from core.fuel_strategy import estimate_fuel_consumption
 from core.llm_advisor import LLMAdvisor
@@ -58,11 +67,10 @@ from gui.i18n import init_i18n, I18n
 
 import numpy as np
 
-
-
 # ================================================================
 # LOGGING
 # ================================================================
+
 
 def setup_logging():
     """Configura logging para console e arquivo."""
@@ -97,6 +105,7 @@ logger = logging.getLogger("LMU_VE.main")
 # ENGINE — Núcleo do Virtual Engineer
 # ================================================================
 
+
 class VirtualEngineer:
     """
     Orquestrador central que conecta IA, banco, telemetria e GUI.
@@ -112,7 +121,7 @@ class VirtualEngineer:
 
         # Config
         self.config = AppConfig()
-        
+
         # Inicializar internacionalização
         init_i18n(self.config.get("language", "pt-br"))
 
@@ -138,40 +147,54 @@ class VirtualEngineer:
                     combo = (cid, tid)
                     self._load_session_memory(cid, tid)
                     self._memory_loaded_for = combo
-                    logger.info("Memória carregada no startup para %s@%s", last_car, last_track)
+                    logger.info(
+                        "Memória carregada no startup para %s@%s", last_car, last_track
+                    )
                 except Exception as e:
-                    logger.debug("Não foi possível carregar memória do último carro/pista: %s", e)
+                    logger.debug(
+                        "Não foi possível carregar memória do último carro/pista: %s", e
+                    )
         except Exception:
             pass
 
         # IA
         self.ia_enabled = TORCH_AVAILABLE
         self.normalizer = FeatureNormalizer()
-        self.trainer = Trainer() # Pode ser a classe Dummy
+        self.trainer = Trainer()  # Pode ser a classe Dummy
 
         if self.ia_enabled:
             self.model_manager = ModelManager(str(MODELS_DIR))
             logger.info("Módulo de IA (PyTorch) ativado.")
         else:
             self.model_manager = None
-            logger.warning("Módulo de IA (PyTorch) desativado. Usando apenas heurísticas.")
+            logger.warning(
+                "Módulo de IA (PyTorch) desativado. Usando apenas heurísticas."
+            )
         self._recent_rewards: list[float] = []
 
         # LLM Advisor (multi-provedor)
         api_key = self.config.get("openrouter_api_key", "")
-        llm_model = self.config.get("openrouter_model", "deepseek/deepseek-chat-v3-0324")
+        llm_model = self.config.get(
+            "openrouter_model", "deepseek/deepseek-chat-v3-0324"
+        )
         llm_provider = self.config.get("llm_provider", "openrouter")
         llm_custom_url = self.config.get("llm_custom_url", "")
         self.llm_advisor = LLMAdvisor(
-            api_key=api_key, model=llm_model,
-            provider=llm_provider, custom_url=llm_custom_url,
+            api_key=api_key,
+            model=llm_model,
+            provider=llm_provider,
+            custom_url=llm_custom_url,
         )
         if self.llm_advisor.enabled:
             logger.info("LLM Advisor ativo (%s / %s)", llm_provider, llm_model)
 
         # Knowledge Distiller (LLM → Rede Neural)
         self.distiller = None
-        if self.ia_enabled and self.llm_advisor.enabled and self.model_manager is not None:
+        if (
+            self.ia_enabled
+            and self.llm_advisor.enabled
+            and self.model_manager is not None
+        ):
             self.distiller = KnowledgeDistiller(
                 llm_advisor=self.llm_advisor,
                 normalizer=self.normalizer,
@@ -187,7 +210,7 @@ class VirtualEngineer:
 
         # Setup atual
         self._current_svm: SVMFile | None = None
-        self._base_svm: SVMFile | None = None      # Setup base (SOMENTE LEITURA)
+        self._base_svm: SVMFile | None = None  # Setup base (SOMENTE LEITURA)
         self._last_deltas: dict[str, int] = {}
         self._last_display_deltas: dict[str, int] = {}  # delta-name format for GUI
         self._last_suggestion_id: int | None = None
@@ -203,8 +226,8 @@ class VirtualEngineer:
         self._auto_suggest_enabled = True
         self._auto_suggest_after_laps = 3  # Sugerir a cada N voltas
         self._on_auto_suggestion_callback = None  # GUI callback
-        self._on_trend_alert_callback = None       # GUI callback para alertas
-        self._lap_history: list[dict] = []         # Histórico para tendências
+        self._on_trend_alert_callback = None  # GUI callback para alertas
+        self._lap_history: list[dict] = []  # Histórico para tendências
         self._pending_auto_suggestion: dict | None = None
 
         # Auto-progressão de nível
@@ -222,12 +245,10 @@ class VirtualEngineer:
         # Pit exit detection: rastreia último número de volta confirmado
         self._last_confirmed_lap: int = -1
 
-
         # Heuristic log: log_ids pendentes aguardando avaliação de reward
         self._pending_heuristic_log_ids: list[int] = []
         # Shared Memory — referência mantida para shutdown
         self._rf2info = None
-
 
         # Lock global para estado compartilhado entre threads
         self._state_lock = threading.Lock()
@@ -236,6 +257,7 @@ class VirtualEngineer:
         self._auto_connect_thread = threading.Thread(
             target=self._auto_connect_loop, daemon=True
         )
+
         # Iniciar watcher dinâmico de carro/pista para carregar memória assim que detectado
         def _car_track_watcher():
             while True:
@@ -243,20 +265,28 @@ class VirtualEngineer:
                     ci = self.get_car_info()
                     if ci and ci.get("vehicle_name") and ci.get("track_name"):
                         try:
-                            cid = self.db.get_or_create_car(ci.get("vehicle_name"), ci.get("vehicle_class", ""))
+                            cid = self.db.get_or_create_car(
+                                ci.get("vehicle_name"), ci.get("vehicle_class", "")
+                            )
                             tid = self.db.get_or_create_track(ci.get("track_name"))
                             combo = (cid, tid)
                             if self._memory_loaded_for != combo:
                                 self._load_session_memory(cid, tid)
                                 self._memory_loaded_for = combo
-                                logger.info("Memória dinâmica carregada para %s@%s", ci.get("vehicle_name"), ci.get("track_name"))
+                                logger.info(
+                                    "Memória dinâmica carregada para %s@%s",
+                                    ci.get("vehicle_name"),
+                                    ci.get("track_name"),
+                                )
                         except Exception:
                             pass
                 except Exception:
                     pass
                 time.sleep(1)
 
-        self._car_track_watcher_thread = threading.Thread(target=_car_track_watcher, daemon=True)
+        self._car_track_watcher_thread = threading.Thread(
+            target=_car_track_watcher, daemon=True
+        )
         self._car_track_watcher_thread.start()
         self._auto_connect_thread.start()
 
@@ -286,20 +316,30 @@ class VirtualEngineer:
 
                 # Verificar se há dados válidos (versão do plugin presente)
                 version = rf2.rf2Ext.mVersion
-                version_str = version.decode("iso-8859-1").rstrip("\x00").strip() if version else ""
+                version_str = (
+                    version.decode("iso-8859-1").rstrip("\x00").strip()
+                    if version
+                    else ""
+                )
 
                 if version_str:
                     logger.info("Shared Memory detectada: versão %s", version_str)
                     with self._state_lock:
                         self._rf2info = rf2
-                    session, vehicle, tyre, brake, engine, timing, lap = create_adapters(rf2)
-                    self.connect_game(session, vehicle, tyre, brake, engine, timing, lap)
+                    session, vehicle, tyre, brake, engine, timing, lap = (
+                        create_adapters(rf2)
+                    )
+                    self.connect_game(
+                        session, vehicle, tyre, brake, engine, timing, lap
+                    )
                     logger.info("Conexão automática com o jogo estabelecida!")
                     return  # Conectado — sair do loop
                 else:
                     rf2.stop()
             except Exception as e:
-                logger.debug("Auto-connect: jogo não encontrado (%s). Tentando novamente...", e)
+                logger.debug(
+                    "Auto-connect: jogo não encontrado (%s). Tentando novamente...", e
+                )
 
             time.sleep(3)  # Tentar novamente a cada 3 segundos
 
@@ -319,8 +359,14 @@ class VirtualEngineer:
             if self.config.get("memory_apply_on_connect", True):
                 # Tentar obter info do carro imediatamente
                 car_info = self.get_car_info()
-                if car_info and car_info.get("vehicle_name") and car_info.get("track_name"):
-                    car_id = self.db.get_or_create_car(car_info.get("vehicle_name"), car_info.get("vehicle_class", ""))
+                if (
+                    car_info
+                    and car_info.get("vehicle_name")
+                    and car_info.get("track_name")
+                ):
+                    car_id = self.db.get_or_create_car(
+                        car_info.get("vehicle_name"), car_info.get("vehicle_class", "")
+                    )
                     track_id = self.db.get_or_create_track(car_info.get("track_name"))
                     combo = (car_id, track_id)
                     if self._memory_loaded_for != combo:
@@ -330,12 +376,21 @@ class VirtualEngineer:
                     # Se ainda não há info, criar thread que espera curto período e tenta novamente
                     def _deferred_load():
                         attempts = 0
-                        while attempts < 10 and not self._memory_loaded_for and self._game_connected:
+                        while (
+                            attempts < 10
+                            and not self._memory_loaded_for
+                            and self._game_connected
+                        ):
                             ci = self.get_car_info()
                             if ci and ci.get("vehicle_name") and ci.get("track_name"):
                                 try:
-                                    cid = self.db.get_or_create_car(ci.get("vehicle_name"), ci.get("vehicle_class", ""))
-                                    tid = self.db.get_or_create_track(ci.get("track_name"))
+                                    cid = self.db.get_or_create_car(
+                                        ci.get("vehicle_name"),
+                                        ci.get("vehicle_class", ""),
+                                    )
+                                    tid = self.db.get_or_create_track(
+                                        ci.get("track_name")
+                                    )
                                     combo2 = (cid, tid)
                                     if self._memory_loaded_for != combo2:
                                         self._load_session_memory(cid, tid)
@@ -345,6 +400,7 @@ class VirtualEngineer:
                                     pass
                             attempts += 1
                             time.sleep(1)
+
                     t = threading.Thread(target=_deferred_load, daemon=True)
                     t.start()
         except Exception as e:
@@ -387,7 +443,9 @@ class VirtualEngineer:
     def _features_to_dict(features: np.ndarray) -> dict:
         """Converte vetor de features (49,) para dict nomeado (para heurísticas)."""
         from core.brain import INPUT_FEATURES
+
         return {name: float(features[i]) for i, name in enumerate(INPUT_FEATURES)}
+
     # ─────────────────────────────────────────────────────
 
     def ai_confidence(self) -> float:
@@ -447,8 +505,9 @@ class VirtualEngineer:
                 features_norm = self.normalizer.normalize(features)
                 input_tensor = torch.FloatTensor(features_norm).unsqueeze(0)
 
-                model = self.model_manager.get_model(self._car_name, self._track_name,
-                                                      car_class=self._car_class)
+                model = self.model_manager.get_model(
+                    self._car_name, self._track_name, car_class=self._car_class
+                )
                 if model is not None:
                     # Epsilon-greedy: mais exploração quando confiança é baixa
                     # confidence 0.2 → epsilon 0.3 (explora muito)
@@ -457,7 +516,9 @@ class VirtualEngineer:
                     epsilon = max(0.02, 0.35 - confidence * 0.4)
                     ai_deltas = model.predict(input_tensor, epsilon=epsilon)
                 else:
-                    logger.warning("ModelManager não retornou modelo para predição de IA.")
+                    logger.warning(
+                        "ModelManager não retornou modelo para predição de IA."
+                    )
             except Exception as e:
                 logger.error(f"Erro na predição da IA: {e}")
                 warnings.append(f"Erro na IA: {e}. Usando apenas heurísticas.")
@@ -475,20 +536,19 @@ class VirtualEngineer:
                 driver_profile={},
                 db_manager=self.db,
             )
-            if ai_deltas: # Se a IA gerou algo, faz merge
-                deltas = merge_suggestions(
-                    heuristic_list, ai_deltas, confidence
-                )
-            else: # Se a IA não gerou nada, usa só heurísticas
+            if ai_deltas:  # Se a IA gerou algo, faz merge
+                deltas = merge_suggestions(heuristic_list, ai_deltas, confidence)
+            else:  # Se a IA não gerou nada, usa só heurísticas
                 deltas = heuristic_list
         else:
             deltas = ai_deltas
 
         return deltas, warnings
 
-
         # Validação de segurança
-        current_setup = self._current_svm.get_all_indices() if self._current_svm else None
+        current_setup = (
+            self._current_svm.get_all_indices() if self._current_svm else None
+        )
         deltas, safety_warnings = validate_deltas(
             deltas, max_delta=3, current_setup=current_setup
         )
@@ -507,8 +567,7 @@ class VirtualEngineer:
             agg = profile.get("aggression", 0.5) if profile else 0.5
             brk = profile.get("braking_style", 0.5) if profile else 0.5
             deltas = apply_driver_profile(
-                deltas, aggression=agg,
-                braking_style=brk, preferences=prefs
+                deltas, aggression=agg, braking_style=brk, preferences=prefs
             )
         except Exception as e:
             logger.debug("Perfil do piloto não aplicado: %s", e)
@@ -516,7 +575,11 @@ class VirtualEngineer:
         # Consultar regras aprendidas para enriquecer sugestões
         try:
             if self._car_class:
-                track_id = self.db.get_or_create_track(self._track_name) if self._track_name else None
+                track_id = (
+                    self.db.get_or_create_track(self._track_name)
+                    if self._track_name
+                    else None
+                )
                 learned = self.db.get_effective_rules(
                     self._car_class, track_id=track_id, min_effectiveness=0.6
                 )
@@ -582,8 +645,11 @@ class VirtualEngineer:
 
         # ── Log de heurísticas disparadas (Item E) ──
         try:
-            if (hasattr(self, '_current_session_id')
-                    and self._current_session_id and heuristic_list):
+            if (
+                hasattr(self, "_current_session_id")
+                and self._current_session_id
+                and heuristic_list
+            ):
                 self._pending_heuristic_log_ids.clear()
                 for hs in heuristic_list:
                     log_id = self.db.log_heuristic_rule(
@@ -598,7 +664,9 @@ class VirtualEngineer:
         except Exception as _exc:
             logger.debug("Erro ao registrar heurística no banco: %s", _exc)
 
-        current_setup = self._current_svm.get_all_indices() if self._current_svm else None
+        current_setup = (
+            self._current_svm.get_all_indices() if self._current_svm else None
+        )
         deltas, warnings = validate_deltas(
             deltas, max_delta=3, current_setup=current_setup
         )
@@ -615,8 +683,7 @@ class VirtualEngineer:
             agg = profile.get("aggression", 0.5) if profile else 0.5
             brk = profile.get("braking_style", 0.5) if profile else 0.5
             deltas = apply_driver_profile(
-                deltas, aggression=agg,
-                braking_style=brk, preferences=prefs
+                deltas, aggression=agg, braking_style=brk, preferences=prefs
             )
         except Exception as e:
             logger.debug("Perfil do piloto não aplicado: %s", e)
@@ -638,7 +705,11 @@ class VirtualEngineer:
         # Registrar sugestão no banco
         try:
             summary = self.telemetry.last_summary
-            if hasattr(self, '_current_session_id') and self._current_session_id and summary:
+            if (
+                hasattr(self, "_current_session_id")
+                and self._current_session_id
+                and summary
+            ):
                 self._last_suggestion_id = self.db.save_suggestion(
                     session_id=self._current_session_id,
                     after_lap=summary.lap_number,
@@ -722,8 +793,11 @@ class VirtualEngineer:
         """Carrega um .svm como setup base (referência somente leitura)."""
         svm = parse_svm(filepath)
         self._base_svm = svm
-        logger.info("Setup base carregado: %s (%d params ajustáveis)",
-                     svm.filepath.name, len(svm.get_adjustable_params()))
+        logger.info(
+            "Setup base carregado: %s (%d params ajustáveis)",
+            svm.filepath.name,
+            len(svm.get_adjustable_params()),
+        )
 
         # Persistir que este setup foi o último usado
         self._save_session_state()
@@ -742,7 +816,9 @@ class VirtualEngineer:
     # Auto-detecção de carro + geração automática de setup
     # ─────────────────────────────────────────────────────
 
-    def auto_detect_and_generate_setup(self, climate: str = "seco") -> tuple["Path", str, bool]:
+    def auto_detect_and_generate_setup(
+        self, climate: str = "seco"
+    ) -> tuple["Path", str, bool]:
         """
         Detecta automaticamente o carro na pista via Shared Memory,
         encontra o melhor .svm salvo no jogo para essa pista,
@@ -803,27 +879,31 @@ class VirtualEngineer:
 
             if history["has_data"]:
                 best_indices = self.db.get_recommended_setup_base(
-                    car_id, track_id, rain_level,
+                    car_id,
+                    track_id,
+                    rain_level,
                     track_temp_c=track_temp_c,
                 )
                 if best_indices:
                     sessions = history["session_count"]
                     count = len(best_indices)
-                    temp_info = (
-                        f", pista {track_temp_c:.0f}°C" if track_temp_c else ""
-                    )
+                    temp_info = f", pista {track_temp_c:.0f}°C" if track_temp_c else ""
                     source = (
                         f"histórico do banco ({count} parâmetros, "
                         f"{sessions} sessões{temp_info})"
                     )
                     logger.info(
                         "Setup histórico encontrado: %d índices para %s@%s%s",
-                        count, self._car_name, self._track_name, temp_info,
+                        count,
+                        self._car_name,
+                        self._track_name,
+                        temp_info,
                     )
             else:
                 logger.info(
                     "Novo combo carro×pista: %s@%s — gerando setup via heurísticas",
-                    self._car_name, self._track_name,
+                    self._car_name,
+                    self._track_name,
                 )
         except Exception as e:
             logger.warning("Nenhum histórico disponível, usando heurísticas: %s", e)
@@ -856,7 +936,8 @@ class VirtualEngineer:
         # Normalizar nome da pista para comparação
         track_norm = (
             self._track_name.lower().replace(" ", "").replace("-", "")
-            if self._track_name else ""
+            if self._track_name
+            else ""
         )
 
         candidates: list["Path"] = []
@@ -916,7 +997,9 @@ class VirtualEngineer:
 
         new_path = self._generate_setorflow_path(climate)
         save_svm(new_svm, output_path=new_path, backup=False)
-        logger.info("Setup histórico aplicado: %s (%d alterações)", new_path.name, len(deltas))
+        logger.info(
+            "Setup histórico aplicado: %s (%d alterações)", new_path.name, len(deltas)
+        )
         return new_path
 
     def _detect_rain_level(self) -> str:
@@ -933,8 +1016,7 @@ class VirtualEngineer:
             pass
         return "dry"
 
-    def create_setup_from_base(self, mode: str = "ia",
-                                climate: str = "seco") -> Path:
+    def create_setup_from_base(self, mode: str = "ia", climate: str = "seco") -> Path:
         """
         Cria um NOVO .svm a partir do setup base.
         O arquivo base NUNCA é modificado.
@@ -961,16 +1043,20 @@ class VirtualEngineer:
 
         from data.svm_parser import write_notes_field
         from datetime import datetime as _dt2
+
         _clima_label = {
-            "seco": "Seco", "chuva_leve": "Chuva Leve",
-            "chuva_forte": "Chuva Forte", "misto": "Misto",
+            "seco": "Seco",
+            "chuva_leve": "Chuva Leve",
+            "chuva_forte": "Chuva Forte",
+            "misto": "Misto",
             "mescla": "Mescla 50/50",
         }.get(climate, climate)
         _auto_note = (
             f"SectorFlow {mode.upper()} setup. Clima: {_clima_label}. "
             f"Carro: {self._car_name or 'desconhecido'}. "
             f"Pista: {self._track_name or 'desconhecida'}. "
-            f"Gerado: {_dt2.now().strftime('%d/%m/%Y %H:%M')}.")
+            f"Gerado: {_dt2.now().strftime('%d/%m/%Y %H:%M')}."
+        )
         write_notes_field(new_svm, _auto_note)
 
         new_path = self._generate_setorflow_path(climate=climate)
@@ -1036,8 +1122,9 @@ class VirtualEngineer:
         """
         return self._generate_sectorflow_path(climate=climate, mode="Q")
 
-    def _generate_sectorflow_path(self, climate: str, mode: str = "Q",
-                                   version: int | None = None) -> Path:
+    def _generate_sectorflow_path(
+        self, climate: str, mode: str = "Q", version: int | None = None
+    ) -> Path:
         """
         Gera o caminho do novo setup no padrão SECTORFLOW.
 
@@ -1057,31 +1144,58 @@ class VirtualEngineer:
 
         # Dicionários de abreviação
         _BRAND_MAP = {
-            "porsche": "POR", "mclaren": "MCL", "ferrari": "FER",
-            "ginetta": "GIN", "oreca": "ORC", "ligier": "LIG",
-            "toyota": "TOY", "peugeot": "PEU", "alpine": "ALP",
-            "bmw": "BMW", "audi": "AUD", "mercedes": "MER",
-            "corvette": "COR", "aston": "AST", "lamborghini": "LAM",
+            "porsche": "POR",
+            "mclaren": "MCL",
+            "ferrari": "FER",
+            "ginetta": "GIN",
+            "oreca": "ORC",
+            "ligier": "LIG",
+            "toyota": "TOY",
+            "peugeot": "PEU",
+            "alpine": "ALP",
+            "bmw": "BMW",
+            "audi": "AUD",
+            "mercedes": "MER",
+            "corvette": "COR",
+            "aston": "AST",
+            "lamborghini": "LAM",
         }
         _TRACK_MAP = {
-            "interlagos": "INT", "monza": "MON", "bahrain": "BAH",
-            "le mans": "LEM", "lemans": "LEM", "spa": "SPA",
-            "fuji": "FUJ", "portimao": "POR", "imola": "IML",
-            "hungaroring": "HUN", "sebring": "SEB", "daytona": "DAY",
-            "laguna seca": "LAG", "watkins glen": "WAT",
+            "interlagos": "INT",
+            "monza": "MON",
+            "bahrain": "BAH",
+            "le mans": "LEM",
+            "lemans": "LEM",
+            "spa": "SPA",
+            "fuji": "FUJ",
+            "portimao": "POR",
+            "imola": "IML",
+            "hungaroring": "HUN",
+            "sebring": "SEB",
+            "daytona": "DAY",
+            "laguna seca": "LAG",
+            "watkins glen": "WAT",
         }
         _CLIMA_MAP = {
-            "seco": "DRY", "chuva_leve": "WET",
-            "chuva_forte": "WET", "misto": "WET", "mescla": "WET",
+            "seco": "DRY",
+            "chuva_leve": "WET",
+            "chuva_forte": "WET",
+            "misto": "WET",
+            "mescla": "WET",
         }
         _CLASS_PREFIX_MAP = {
-            "hypercar": "HY", "lmh": "HY", "lmdh": "HY",
-            "lmp2": "LMP2", "lmp3": "LMP3",
-            "gt3": "GT3", "lmgt3": "GT3", "gte": "GTE",
+            "hypercar": "HY",
+            "lmh": "HY",
+            "lmdh": "HY",
+            "lmp2": "LMP2",
+            "lmp3": "LMP3",
+            "gt3": "GT3",
+            "lmgt3": "GT3",
+            "gte": "GTE",
         }
 
         def _sanitize(text: str) -> str:
-            return _re.sub(r'[<>:"/\\|?*\s]', '', text).upper()
+            return _re.sub(r'[<>:"/\\|?*\s]', "", text).upper()
 
         def _find_brand(name: str) -> str:
             name_lower = name.lower()
@@ -1104,9 +1218,9 @@ class VirtualEngineer:
         clima_str = _CLIMA_MAP.get(climate, "DRY")
         class_prefix = _CLASS_PREFIX_MAP.get(car_class, _sanitize(car_class[:3]))
         brand_str = _find_brand(car_name)
-        cat_mar = (class_prefix + brand_str)[:8]   # max 8 chars
+        cat_mar = (class_prefix + brand_str)[:8]  # max 8 chars
         track_str = _find_track_abbr(track_name)
-        date_str = dt.now().strftime("%d%m")        # DDMM — curto
+        date_str = dt.now().strftime("%d%m")  # DDMM — curto
         mode_str = _sanitize(mode) or "Q"
 
         # Salvar na mesma pasta do arquivo base
@@ -1157,13 +1271,18 @@ class VirtualEngineer:
             Path do novo setup de corrida criado.
         """
         from data.svm_parser import (
-            parse_svm, apply_deltas, save_svm,
-            calculate_fuel_compensation, write_notes_field,
+            parse_svm,
+            apply_deltas,
+            save_svm,
+            calculate_fuel_compensation,
+            write_notes_field,
         )
         from datetime import datetime as _dt
 
-        source_path = Path(quali_svm_path) if quali_svm_path else (
-            self._base_svm.filepath if self._base_svm else None
+        source_path = (
+            Path(quali_svm_path)
+            if quali_svm_path
+            else (self._base_svm.filepath if self._base_svm else None)
         )
         if source_path is None or not source_path.exists():
             raise ValueError("Nenhum setup de quali disponível para gerar Race.")
@@ -1173,21 +1292,21 @@ class VirtualEngineer:
         # Offsets Race vs Quali
         race_deltas: dict[str, int] = {
             # Altura — compensar peso do combustível
-            "FRONTLEFT.RideHeightSetting":   +2,
-            "FRONTRIGHT.RideHeightSetting":  +2,
-            "REARLEFT.RideHeightSetting":    +2,
-            "REARRIGHT.RideHeightSetting":   +2,
+            "FRONTLEFT.RideHeightSetting": +2,
+            "FRONTRIGHT.RideHeightSetting": +2,
+            "REARLEFT.RideHeightSetting": +2,
+            "REARRIGHT.RideHeightSetting": +2,
             # Camber — mais conservador para longevidade
-            "FRONTLEFT.CamberSetting":       -1,
-            "FRONTRIGHT.CamberSetting":      -1,
+            "FRONTLEFT.CamberSetting": -1,
+            "FRONTRIGHT.CamberSetting": -1,
             # Molas — suavizar para peso extra + desgaste
-            "FRONTLEFT.SpringSetting":       -1,
-            "FRONTRIGHT.SpringSetting":      -1,
-            "REARLEFT.SpringSetting":        -1,
-            "REARRIGHT.SpringSetting":       -1,
+            "FRONTLEFT.SpringSetting": -1,
+            "FRONTRIGHT.SpringSetting": -1,
+            "REARLEFT.SpringSetting": -1,
+            "REARRIGHT.SpringSetting": -1,
             # Dutos de freio — mais aberto para prevenir fade
-            "FRONTLEFT.BrakeDuctSetting":    +2,
-            "FRONTRIGHT.BrakeDuctSetting":   +2,
+            "FRONTLEFT.BrakeDuctSetting": +2,
+            "FRONTRIGHT.BrakeDuctSetting": +2,
         }
 
         # Compensação adicional de ride height por combustível
@@ -1198,7 +1317,9 @@ class VirtualEngineer:
                 if "FUEL" in param.name.upper():
                     fuel_param = param
                     break
-            current_liters = (fuel_param.index * current_fuel_ratio) if fuel_param else 0.0
+            current_liters = (
+                (fuel_param.index * current_fuel_ratio) if fuel_param else 0.0
+            )
             fuel_delta = target_fuel_liters - current_liters
             car_class = self._car_class or ""
             rh_comp = calculate_fuel_compensation(fuel_delta, car_class)
@@ -1396,18 +1517,22 @@ class VirtualEngineer:
             if fuel_with_margin <= fuel_capacity:
                 # Cabe em um stint
                 result["fuel_recommended"] = float(ceil(fuel_with_margin))
-                result["stints"] = [{
-                    "stint": 1,
-                    "fuel_load": float(ceil(fuel_with_margin)),
-                    "laps": result["estimated_laps"],
-                    "pit_after": False,
-                }]
+                result["stints"] = [
+                    {
+                        "stint": 1,
+                        "fuel_load": float(ceil(fuel_with_margin)),
+                        "laps": result["estimated_laps"],
+                        "pit_after": False,
+                    }
+                ]
                 result["total_pits"] = 0
             else:
                 # Precisa de pit stops
                 n_stints = ceil(fuel_with_margin / fuel_capacity)
                 result["total_pits"] = n_stints - 1
-                result["fuel_recommended"] = float(int(round(fuel_capacity)))  # Stint 1 cheio
+                result["fuel_recommended"] = float(
+                    int(round(fuel_capacity))
+                )  # Stint 1 cheio
                 laps_per_stint = result["estimated_laps"] / n_stints
                 stints = []
                 remaining_laps = result["estimated_laps"]
@@ -1421,20 +1546,26 @@ class VirtualEngineer:
                             fuel_capacity,
                         )
                     stint_fuel = int(ceil(stint_fuel)) if stint_fuel > 0 else 0
-                    stints.append({
-                        "stint": s + 1,
-                        "fuel_load": float(stint_fuel),
-                        "laps": stint_laps,
-                        "pit_after": s < n_stints - 1,
-                    })
+                    stints.append(
+                        {
+                            "stint": s + 1,
+                            "fuel_load": float(stint_fuel),
+                            "laps": stint_laps,
+                            "pit_after": s < n_stints - 1,
+                        }
+                    )
                     remaining_laps -= stint_laps
                 result["stints"] = stints
         else:
-            result["fuel_recommended"] = float(ceil(fuel_with_margin)) if fuel_with_margin > 0 else 0.0
+            result["fuel_recommended"] = (
+                float(ceil(fuel_with_margin)) if fuel_with_margin > 0 else 0.0
+            )
 
         # Peso do combustível (densidade média gasolina de corrida)
         FUEL_DENSITY_KG_PER_L = 0.742
-        result["fuel_weight_kg"] = round(result["fuel_recommended"] * FUEL_DENSITY_KG_PER_L, 1)
+        result["fuel_weight_kg"] = round(
+            result["fuel_recommended"] * FUEL_DENSITY_KG_PER_L, 1
+        )
         if fuel_capacity > 0:
             result["fuel_tank_pct"] = round(
                 result["fuel_recommended"] / fuel_capacity * 100, 1
@@ -1472,18 +1603,26 @@ class VirtualEngineer:
         # Explicações contextuais
         explanations = []
         if mode == "quali":
-            explanations.append("Molas mais duras (+1): carro mais leve responde melhor")
+            explanations.append(
+                "Molas mais duras (+1): carro mais leve responde melhor"
+            )
             explanations.append("Camber mais agressivo (+1): máximo grip em curva")
-            explanations.append("Pressão inicial mais baixa (-1): aquece rápido com menos peso")
+            explanations.append(
+                "Pressão inicial mais baixa (-1): aquece rápido com menos peso"
+            )
             explanations.append("Engine Mix: modo potência (+1)")
             explanations.append("Radiador: mínimo (-1): menos arrasto")
             if car_class in ("hypercar", "lmdh"):
                 explanations.append("Deploy máximo (+2): usar toda a energia elétrica")
         else:
-            explanations.append("Molas mais macias (-1): compensar peso extra de combustível")
+            explanations.append(
+                "Molas mais macias (-1): compensar peso extra de combustível"
+            )
             explanations.append("Camber conservador (-1): preservar pneus na corrida")
             explanations.append("Radiador: mais aberto (+1): prevenir superaquecimento")
-            explanations.append("Anti-roll bars: mais macias (-1): estabilidade com peso")
+            explanations.append(
+                "Anti-roll bars: mais macias (-1): estabilidade com peso"
+            )
             if result["needs_tire_pit"]:
                 explanations.append("⚠️ Desgaste previsto alto — trocar pneus no pit")
             if result["total_pits"] > 0:
@@ -1535,19 +1674,25 @@ class VirtualEngineer:
                 result["fuel_current"] = live.get("fuel", 0.0)
                 result["fuel_capacity"] = live.get("fuel_capacity", 0.0)
                 if result["fuel_capacity"] > 0:
-                    result["fuel_fraction"] = result["fuel_current"] / result["fuel_capacity"]
+                    result["fuel_fraction"] = (
+                        result["fuel_current"] / result["fuel_capacity"]
+                    )
         except Exception:
             pass
 
         # Consumo médio por volta a partir do histórico (apenas voltas válidas e sem pit laps)
         if len(self._lap_history) >= 2:
-            fuel_estimate = estimate_fuel_consumption(self._lap_history, recent_window=3)
+            fuel_estimate = estimate_fuel_consumption(
+                self._lap_history, recent_window=3
+            )
             avg_consumption = fuel_estimate["fuel_per_lap"]
             if avg_consumption > 0:
                 result["fuel_per_lap"] = avg_consumption
 
                 if avg_consumption > 0 and result["fuel_current"] > 0:
-                    result["laps_remaining"] = int(result["fuel_current"] / avg_consumption)
+                    result["laps_remaining"] = int(
+                        result["fuel_current"] / avg_consumption
+                    )
 
             # Fuel Ratio = litros/volta normalizado pela capacidade
             if result["fuel_capacity"] > 0:
@@ -1570,7 +1715,11 @@ class VirtualEngineer:
             result["avg_lap_time"] = sum(valid_times) / len(valid_times)
 
         # Virtual Energy / Bateria (Hypercar)
-        is_hypercar = self._car_class.lower() in ("hypercar", "lmdh") if self._car_class else False
+        is_hypercar = (
+            self._car_class.lower() in ("hypercar", "lmdh")
+            if self._car_class
+            else False
+        )
         result["has_regen"] = is_hypercar
 
         if is_hypercar:
@@ -1684,8 +1833,7 @@ class VirtualEngineer:
             self._last_confirmed_lap = summary.lap_number
             # Registrar carro e pista no banco
             car_id = self.db.get_or_create_car(
-                summary.vehicle_name,
-                summary.vehicle_class
+                summary.vehicle_name, summary.vehicle_class
             )
             track_id = self.db.get_or_create_track(summary.track_name)
 
@@ -1708,16 +1856,23 @@ class VirtualEngineer:
 
                 # Atualizar contagem de sessões na memória
                 mem = self._active_memory or {}
-                self.db.save_car_track_memory(car_id, track_id, {
-                    "total_sessions": mem.get("total_sessions", 0) + 1,
-                })
+                self.db.save_car_track_memory(
+                    car_id,
+                    track_id,
+                    {
+                        "total_sessions": mem.get("total_sessions", 0) + 1,
+                    },
+                )
 
                 # ── Restaurar estado da sessão anterior ──
                 self._restore_session_state(car_id, track_id)
 
             # Registrar sessão + volta em transação atômica
             with self.db.transaction():
-                if not hasattr(self, '_current_session_id') or self._current_session_id is None:
+                if (
+                    not hasattr(self, "_current_session_id")
+                    or self._current_session_id is None
+                ):
                     driver_id = self.db.get_or_create_driver(
                         self.config.get("driver_name", "Piloto")
                     )
@@ -1741,9 +1896,17 @@ class VirtualEngineer:
                 }
                 fuel_context = "normal"
                 try:
-                    if self._vehicle and hasattr(self._vehicle, "in_pits") and self._vehicle.in_pits():
+                    if (
+                        self._vehicle
+                        and hasattr(self._vehicle, "in_pits")
+                        and self._vehicle.in_pits()
+                    ):
                         fuel_context = "pit"
-                    elif self._vehicle and hasattr(self._vehicle, "in_garage") and self._vehicle.in_garage():
+                    elif (
+                        self._vehicle
+                        and hasattr(self._vehicle, "in_garage")
+                        and self._vehicle.in_garage()
+                    ):
                         fuel_context = "pit"
                 except Exception:
                     fuel_context = "normal"
@@ -1751,14 +1914,23 @@ class VirtualEngineer:
                 feature_dict = self._features_to_dict(features)
 
                 # Persistir combustível para permitir média histórica por carro+pista.
-                curr_fuel = feature_dict.get("fuel", 0.0) or feature_dict.get("fuel_start", 0.0)
+                curr_fuel = feature_dict.get("fuel", 0.0) or feature_dict.get(
+                    "fuel_start", 0.0
+                )
                 prev_fuel = 0.0
                 with self._state_lock:
                     if self._lap_history:
                         prev_feat = self._lap_history[-1].get("features", {})
-                        prev_fuel = prev_feat.get("fuel", 0.0) or prev_feat.get("fuel_start", 0.0)
+                        prev_fuel = prev_feat.get("fuel", 0.0) or prev_feat.get(
+                            "fuel_start", 0.0
+                        )
 
-                if prev_fuel > 0 and curr_fuel > 0 and prev_fuel > curr_fuel and fuel_context == "normal":
+                if (
+                    prev_fuel > 0
+                    and curr_fuel > 0
+                    and prev_fuel > curr_fuel
+                    and fuel_context == "normal"
+                ):
                     lap_data["fuel_at_start"] = float(prev_fuel)
                     lap_data["fuel_used"] = float(prev_fuel - curr_fuel)
                 elif curr_fuel > 0:
@@ -1766,37 +1938,65 @@ class VirtualEngineer:
                     lap_data["fuel_at_start"] = float(curr_fuel)
                     lap_data["fuel_used"] = 0.0
 
-                for key in ("temp_fl_inner", "temp_fl_middle", "temp_fl_outer",
-                            "temp_fr_inner", "temp_fr_middle", "temp_fr_outer",
-                            "temp_rl_inner", "temp_rl_middle", "temp_rl_outer",
-                            "temp_rr_inner", "temp_rr_middle", "temp_rr_outer",
-                            "pressure_fl", "pressure_fr", "pressure_rl", "pressure_rr",
-                            "wear_fl", "wear_fr", "wear_rl", "wear_rr",
-                            "load_fl", "load_fr", "load_rl", "load_rr",
-                            "ride_height_f", "ride_height_r",
-                            "downforce_f", "downforce_r", "max_speed"):
+                for key in (
+                    "temp_fl_inner",
+                    "temp_fl_middle",
+                    "temp_fl_outer",
+                    "temp_fr_inner",
+                    "temp_fr_middle",
+                    "temp_fr_outer",
+                    "temp_rl_inner",
+                    "temp_rl_middle",
+                    "temp_rl_outer",
+                    "temp_rr_inner",
+                    "temp_rr_middle",
+                    "temp_rr_outer",
+                    "pressure_fl",
+                    "pressure_fr",
+                    "pressure_rl",
+                    "pressure_rr",
+                    "wear_fl",
+                    "wear_fr",
+                    "wear_rl",
+                    "wear_rr",
+                    "load_fl",
+                    "load_fr",
+                    "load_rl",
+                    "load_rr",
+                    "ride_height_f",
+                    "ride_height_r",
+                    "downforce_f",
+                    "downforce_r",
+                    "max_speed",
+                ):
                     lap_data[key] = feature_dict.get(key, 0.0)
                 lap_data["avg_pitch"] = feature_dict.get("pitch", 0.0)
                 lap_data["avg_roll"] = feature_dict.get("roll", 0.0)
                 lap_data["avg_heave"] = feature_dict.get("heave", 0.0)
                 # Brake temps not in features, set to 0
-                for bt in ("max_brake_temp_fl", "max_brake_temp_fr",
-                            "max_brake_temp_rl", "max_brake_temp_rr"):
+                for bt in (
+                    "max_brake_temp_fl",
+                    "max_brake_temp_fr",
+                    "max_brake_temp_rl",
+                    "max_brake_temp_rr",
+                ):
                     lap_data[bt] = 0.0
 
                 self.db.insert_lap(session_id=session_id, lap_data=lap_data)
 
             # Acumular histórico para análise de tendências
             with self._state_lock:
-                self._lap_history.append({
-                    "lap": summary.lap_number,
-                    "time": summary.lap_time,
-                    "valid": summary.is_valid,
-                    "features": feature_dict,
-                    "grip": feature_dict.get("grip_avg", 0.5),
-                    "rain": feature_dict.get("raining", 0.0),
-                    "fuel_context": fuel_context,
-                })
+                self._lap_history.append(
+                    {
+                        "lap": summary.lap_number,
+                        "time": summary.lap_time,
+                        "valid": summary.is_valid,
+                        "features": feature_dict,
+                        "grip": feature_dict.get("grip_avg", 0.5),
+                        "rain": feature_dict.get("raining", 0.0),
+                        "fuel_context": fuel_context,
+                    }
+                )
                 # Manter últimas 30 voltas
                 if len(self._lap_history) > 30:
                     self._lap_history = self._lap_history[-30:]
@@ -1854,7 +2054,10 @@ class VirtualEngineer:
 
                     # Montar output com nível correto
                     from core.brain import LEVEL_OUTPUTS
-                    output_names = LEVEL_OUTPUTS.get(self._current_level, LEVEL_OUTPUTS["basic"])
+
+                    output_names = LEVEL_OUTPUTS.get(
+                        self._current_level, LEVEL_OUTPUTS["basic"]
+                    )
                     output_vec = np.zeros(len(output_names), dtype=np.float32)
                     for i, key in enumerate(output_names):
                         output_vec[i] = self._last_deltas.get(key, 0)
@@ -1875,8 +2078,8 @@ class VirtualEngineer:
                     # Atualizar was_effective para regras disparadas na última sugestão
                     if self._pending_heuristic_log_ids:
                         try:
-                            effective = 1 if reward > 0.1 else (
-                                0 if reward < -0.1 else None
+                            effective = (
+                                1 if reward > 0.1 else (0 if reward < -0.1 else None)
                             )
                             if effective is not None:
                                 for _lid in self._pending_heuristic_log_ids:
@@ -1908,35 +2111,48 @@ class VirtualEngineer:
                         train_limit = 100
 
                     if summary.lap_number % train_interval == 0:
-                        td = self.db.load_training_data(car_id, track_id, limit=train_limit)
+                        td = self.db.load_training_data(
+                            car_id, track_id, limit=train_limit
+                        )
                         if td:
                             model = None
                             result = None
                             if self.ia_enabled and self.model_manager is not None:
                                 model = self.model_manager.get_model(
-                                    summary.vehicle_name, summary.track_name,
+                                    summary.vehicle_name,
+                                    summary.track_name,
                                     car_class=summary.vehicle_class,
                                     level=self._current_level,
                                 )
                                 if model is not None:
                                     self.trainer.set_model(model)
-                                    result = self.trainer.train_online(td, epochs=train_epochs)
+                                    result = self.trainer.train_online(
+                                        td, epochs=train_epochs
+                                    )
 
-                            if self.ia_enabled and result is not None and model is not None:
+                            if (
+                                self.ia_enabled
+                                and result is not None
+                                and model is not None
+                            ):
                                 logger.info(
                                     "Treinamento online [%s]: %d amostras, loss=%.4f, lr=%.1e",
-                                    self._current_level, result.total_samples,
-                                    result.final_loss, self.trainer.current_lr,
+                                    self._current_level,
+                                    result.total_samples,
+                                    result.final_loss,
+                                    self.trainer.current_lr,
                                 )
                                 # Salvar modelo após treinamento
                                 self.model_manager.save_model(
                                     model=model,
                                     car_class=summary.vehicle_class,
                                     car_name=summary.vehicle_name,
-                                track_name=summary.track_name,
-                                metadata={"reward": result.avg_reward,
-                                          "epoch": result.epochs_completed},
-                            )
+                                    track_name=summary.track_name,
+                                    metadata={
+                                        "reward": result.avg_reward,
+                                        "epoch": result.epochs_completed,
+                                    },
+                                )
 
                             # Transfer Learning: criar modelo compartilhado
                             # quando há modelos suficientes da mesma classe
@@ -1955,13 +2171,16 @@ class VirtualEngineer:
             self._record_learning_rules_multi(feature_dict)
 
             # ── Atualizar memória persistente carro×pista ──
-            self._update_car_track_memory(car_id, track_id,
-                                          summary.lap_time, feature_dict)
+            self._update_car_track_memory(
+                car_id, track_id, summary.lap_time, feature_dict
+            )
 
             # ── Auto-suggest ──
-            if (self._auto_suggest_enabled
-                    and summary.lap_number >= 2
-                    and summary.lap_number % self._auto_suggest_after_laps == 0):
+            if (
+                self._auto_suggest_enabled
+                and summary.lap_number >= 2
+                and summary.lap_number % self._auto_suggest_after_laps == 0
+            ):
                 self._generate_auto_suggestion()
 
             # ── LLM Auto-aprendizagem ──
@@ -1973,9 +2192,12 @@ class VirtualEngineer:
 
             logger.info(
                 "Volta %d registrada: %.3fs (%s @ %s) [nível=%s, conf=%.0f%%]",
-                summary.lap_number, summary.lap_time,
-                summary.vehicle_name, summary.track_name,
-                self._current_level, self.ai_confidence() * 100,
+                summary.lap_number,
+                summary.lap_time,
+                summary.vehicle_name,
+                summary.track_name,
+                self._current_level,
+                self.ai_confidence() * 100,
             )
 
         except Exception as e:
@@ -2006,7 +2228,10 @@ class VirtualEngineer:
         if self._current_level != old_level:
             logger.info(
                 "IA progrediu de nível: %s → %s (%d amostras, %.0f%% confiança)",
-                old_level, self._current_level, samples, confidence * 100,
+                old_level,
+                self._current_level,
+                samples,
+                confidence * 100,
             )
             # Notificar GUI via callback
             if self._on_trend_alert_callback:
@@ -2037,7 +2262,7 @@ class VirtualEngineer:
 
         # 1. Tempos piorando (tendência de piora > 0.5s nas últimas 5 voltas)
         if len(times) >= 3:
-            deltas_t = [times[i] - times[i-1] for i in range(1, len(times))]
+            deltas_t = [times[i] - times[i - 1] for i in range(1, len(times))]
             avg_delta = sum(deltas_t) / len(deltas_t)
             if avg_delta > 0.5:
                 alerts.append(
@@ -2076,7 +2301,11 @@ class VirtualEngineer:
         # 4. Superaquecimento de pneus (temperatura subindo continuamente)
         for wheel in ("fl", "fr", "rl", "rr"):
             key = f"temp_{wheel}_middle"
-            temps = [h["features"].get(key, 0) for h in recent if h["features"].get(key, 0) > 0]
+            temps = [
+                h["features"].get(key, 0)
+                for h in recent
+                if h["features"].get(key, 0) > 0
+            ]
             if len(temps) >= 3 and temps[-1] - temps[0] > 15:
                 alerts.append(
                     f"🔥 **Pneu {wheel.upper()} superaquecendo**: "
@@ -2106,8 +2335,11 @@ class VirtualEngineer:
             return
 
         try:
-            track_id = (self.db.get_or_create_track(self._track_name)
-                        if self._track_name else None)
+            track_id = (
+                self.db.get_or_create_track(self._track_name)
+                if self._track_name
+                else None
+            )
 
             # Pegar reward mais recente
             reward = self._recent_rewards[-1] if self._recent_rewards else 0.0
@@ -2207,16 +2439,23 @@ class VirtualEngineer:
                     "Memória carregada: %s sessões, %s voltas, melhor volta: %s",
                     memory.get("total_sessions", 0),
                     memory.get("total_laps", 0),
-                    f"{memory['best_lap_time']:.3f}" if memory.get("best_lap_time") else "N/A",
+                    (
+                        f"{memory['best_lap_time']:.3f}"
+                        if memory.get("best_lap_time")
+                        else "N/A"
+                    ),
                 )
 
                 # Carregar deltas que historicamente funcionaram
                 effective = self.db.get_effective_deltas_history(car_id, track_id)
                 if effective:
-                    self._memory_optimal_deltas = self._compute_weighted_deltas(effective)
+                    self._memory_optimal_deltas = self._compute_weighted_deltas(
+                        effective
+                    )
                     logger.info(
                         "Deltas ótimos da memória: %d parâmetros de %d amostras",
-                        len(self._memory_optimal_deltas), len(effective),
+                        len(self._memory_optimal_deltas),
+                        len(effective),
                     )
                 else:
                     self._memory_optimal_deltas = {}
@@ -2226,7 +2465,10 @@ class VirtualEngineer:
                 self._session_history = history
 
                 # Notificar GUI se tiver callback
-                if self._on_trend_alert_callback and memory.get("total_sessions", 0) > 0:
+                if (
+                    self._on_trend_alert_callback
+                    and memory.get("total_sessions", 0) > 0
+                ):
                     msg = (
                         f"🧠 **Memória carregada** para este carro × pista!\n"
                         f"📊 {memory.get('total_sessions', 0)} sessões anteriores, "
@@ -2237,7 +2479,9 @@ class VirtualEngineer:
                     if memory.get("recurring_problems"):
                         problems = memory["recurring_problems"]
                         if isinstance(problems, list) and problems:
-                            msg += f"⚠️ Problemas recorrentes: {', '.join(problems[:5])}\n"
+                            msg += (
+                                f"⚠️ Problemas recorrentes: {', '.join(problems[:5])}\n"
+                            )
                     msg += "A IA usará essa experiência para sugestões melhores."
                     self._on_trend_alert_callback(msg)
 
@@ -2249,9 +2493,15 @@ class VirtualEngineer:
                 # Carregar normalizer
                 try:
                     self.normalizer.load(car_id, track_id, base_dir=MODELS_DIR)
-                    logger.info("Normalizer carregado para carro %s e pista %s", car_id, track_id)
+                    logger.info(
+                        "Normalizer carregado para carro %s e pista %s",
+                        car_id,
+                        track_id,
+                    )
                 except FileNotFoundError:
-                    logger.info("Nenhum normalizer encontrado para o carro/pista atual. Um novo será criado.")
+                    logger.info(
+                        "Nenhum normalizer encontrado para o carro/pista atual. Um novo será criado."
+                    )
                 except Exception as e:
                     logger.debug("Erro ao carregar normalizer: %s", e)
 
@@ -2260,7 +2510,8 @@ class VirtualEngineer:
                     cross_data = self.db.get_cross_class_training_data(car_id, track_id)
                     if cross_data and self._on_trend_alert_callback:
                         car_row = self.db.conn.execute(
-                            "SELECT car_class FROM cars WHERE car_id = ?", (car_id,),
+                            "SELECT car_class FROM cars WHERE car_id = ?",
+                            (car_id,),
                         ).fetchone()
                         car_class = car_row["car_class"] if car_row else "categoria"
                         self._on_trend_alert_callback(
@@ -2282,7 +2533,11 @@ class VirtualEngineer:
                     bench_cars = tier_info.get("cars_in_benchmark", 0)
                     conf = tier_info.get("confidence", 0.0)
                     if tier != "sem_referencia" and bench_cars >= 2 and conf >= 0.3:
-                        icons = {"elite": "🏅", "acima_media": "📈", "abaixo_media": "📉"}
+                        icons = {
+                            "elite": "🏅",
+                            "acima_media": "📈",
+                            "abaixo_media": "📉",
+                        }
                         icon = icons.get(tier, "📊")
                         gap = tier_info.get("gap_to_avg")
                         gap_str = f"{gap:+.3f}s vs média" if gap is not None else ""
@@ -2305,6 +2560,7 @@ class VirtualEngineer:
         usando o reward como peso.
         """
         from core.brain import LEVEL_OUTPUTS
+
         output_names = LEVEL_OUTPUTS.get(self._current_level, LEVEL_OUTPUTS["basic"])
 
         weighted_sum = {}
@@ -2329,8 +2585,9 @@ class VirtualEngineer:
 
         return result
 
-    def _update_car_track_memory(self, car_id: int, track_id: int,
-                                 lap_time: float, feature_dict: dict):
+    def _update_car_track_memory(
+        self, car_id: int, track_id: int, lap_time: float, feature_dict: dict
+    ):
         """
         Atualiza a memória persistente após cada volta.
         Chamado de _on_lap_completed.
@@ -2355,10 +2612,10 @@ class VirtualEngineer:
                     "rr": feature_dict.get("temp_rr_middle", 0),
                 },
             }
-            
+
             # TC/ABS/Brake settings se disponíveis no telemetry atual
             try:
-                if hasattr(self, 'telemetry') and self.telemetry:
+                if hasattr(self, "telemetry") and self.telemetry:
                     live = self.telemetry.get_live_telemetry()
                     if live:
                         lap_learning_data["tc_setting"] = live.get("tc_setting")
@@ -2366,12 +2623,12 @@ class VirtualEngineer:
                         lap_learning_data["brake_bias"] = live.get("brake_bias")
             except Exception:
                 pass
-            
+
             # Determinar clima atual
             weather = "dry"
             if feature_dict.get("raining", 0) > 0.3:
                 weather = "wet"
-            
+
             # Chamar novo sistema de atualização de aprendizagem
             self.db.update_session_learning_data(
                 car_id=car_id,
@@ -2379,7 +2636,7 @@ class VirtualEngineer:
                 lap_data=lap_learning_data,
                 weather=weather,
             )
-            
+
             # ── Sistema legado: manter compatibilidade ──
             memory = self.db.load_car_track_memory(car_id, track_id) or {}
 
@@ -2388,6 +2645,7 @@ class VirtualEngineer:
             existing_problems = memory.get("recurring_problems") or []
             if isinstance(existing_problems, str):
                 import json
+
                 try:
                     existing_problems = json.loads(existing_problems)
                 except (json.JSONDecodeError, TypeError):
@@ -2402,8 +2660,9 @@ class VirtualEngineer:
                 problem_counts[p] = problem_counts.get(p, 0) + 1
 
             # Manter top 10 problemas mais frequentes
-            sorted_problems = sorted(problem_counts.keys(),
-                                     key=lambda x: problem_counts[x], reverse=True)[:10]
+            sorted_problems = sorted(
+                problem_counts.keys(), key=lambda x: problem_counts[x], reverse=True
+            )[:10]
 
             # Setup atual como referência
             setup_indices = None
@@ -2429,7 +2688,11 @@ class VirtualEngineer:
                 "avg_tire_wear_rate": feature_dict.get("wear_fl", 0),
                 "track_bumpiness": feature_dict.get("heave", 0),
                 "recurring_problems": sorted_problems,
-                "typical_weather": weather if memory.get("total_laps", 0) < 10 else memory.get("typical_weather", "dry"),
+                "typical_weather": (
+                    weather
+                    if memory.get("total_laps", 0) < 10
+                    else memory.get("typical_weather", "dry")
+                ),
             }
 
             # Deltas ótimos: média ponderada com memória anterior
@@ -2437,6 +2700,7 @@ class VirtualEngineer:
                 optimal = memory.get("optimal_deltas") or {}
                 if isinstance(optimal, str):
                     import json
+
                     try:
                         optimal = json.loads(optimal)
                     except (json.JSONDecodeError, TypeError):
@@ -2450,7 +2714,7 @@ class VirtualEngineer:
                     data["optimal_deltas"] = optimal
 
             self.db.save_car_track_memory(car_id, track_id, data)
-            
+
             # ── Notificar GUI sobre dados salvos (a cada 10 voltas) ──
             total_laps = memory.get("total_laps", 0) + 1
             if total_laps % 10 == 0 and self._on_trend_alert_callback:
@@ -2466,7 +2730,8 @@ class VirtualEngineer:
 
             # ── Atualizar benchmarks da categoria (GT3, Hypercar, etc.) ──
             car_row = self.db.conn.execute(
-                "SELECT car_class FROM cars WHERE car_id = ?", (car_id,),
+                "SELECT car_class FROM cars WHERE car_id = ?",
+                (car_id,),
             ).fetchone()
             if car_row and car_row["car_class"]:
                 try:
@@ -2498,8 +2763,12 @@ class VirtualEngineer:
         ai_conf = self.ai_confidence()
 
         if memory_conf < threshold:
-            logger.debug("Memória disponível mas abaixo do limiar (%.3f). mem_conf=%.3f threshold=%.3f",
-                         memory_conf, memory_conf, threshold)
+            logger.debug(
+                "Memória disponível mas abaixo do limiar (%.3f). mem_conf=%.3f threshold=%.3f",
+                memory_conf,
+                memory_conf,
+                threshold,
+            )
             # permitir aplicação fraca em caso de necessidade, mas com peso reduzido
 
         # Peso da memória: começa em 0.5 (50%) e diminui conforme a IA ganha confiança
@@ -2511,17 +2780,22 @@ class VirtualEngineer:
             if current == 0 and mem_val != 0:
                 # IA não tem opinião → usar memória
                 deltas[param] = mem_val
-                applied.append((param, 'filled', mem_val))
+                applied.append((param, "filled", mem_val))
             elif current != 0 and mem_val != 0:
                 # Blend: IA + memória
                 blended = round(current * (1 - memory_weight) + mem_val * memory_weight)
                 if blended != 0:
                     deltas[param] = blended
-                    applied.append((param, 'blended', blended))
+                    applied.append((param, "blended", blended))
 
         if applied:
-            logger.info("Memória aplicada: %d parâmetros (peso=%.3f, mem_conf=%.3f, ai_conf=%.3f)",
-                        len(applied), memory_weight, memory_conf, ai_conf)
+            logger.info(
+                "Memória aplicada: %d parâmetros (peso=%.3f, mem_conf=%.3f, ai_conf=%.3f)",
+                len(applied),
+                memory_weight,
+                memory_conf,
+                ai_conf,
+            )
             logger.debug("Parâmetros aplicados: %s", applied)
 
         return deltas
@@ -2605,7 +2879,9 @@ class VirtualEngineer:
 
         logger.info(
             "Biblioteca de setups: %d escaneados, %d processados, %d pistas",
-            stats["scanned"], stats["new"], stats["tracks"],
+            stats["scanned"],
+            stats["new"],
+            stats["tracks"],
         )
         return stats
 
@@ -2702,7 +2978,7 @@ class VirtualEngineer:
                 safe_class = self.model_manager._sanitize(car_class)
                 class_dir = self.model_manager.models_dir / safe_class
             else:
-                return # Não pode criar shared model sem IA
+                return  # Não pode criar shared model sem IA
             if not class_dir.exists():
                 return
 
@@ -2726,13 +3002,16 @@ class VirtualEngineer:
                     logger.debug("Erro ao carregar modelo: %s", e)
 
             try:
-                if len(models) >= 3 and self.ia_enabled and self.model_manager is not None:
+                if (
+                    len(models) >= 3
+                    and self.ia_enabled
+                    and self.model_manager is not None
+                ):
                     self.model_manager.create_shared_model(car_class, models)
             except Exception as e:
                 logger.debug("Erro ao criar shared model: %s", e)
         except Exception as e:
             logger.debug("Erro geral em _try_create_shared_model: %s", e)
-
 
     # ─────────────────────────────────────────────────────
     # Destilação de Conhecimento (LLM → Autonomia)
@@ -2788,8 +3067,9 @@ class VirtualEngineer:
     # LLM Aprendizagem via Chat
     # ─────────────────────────────────────────────────────
 
-    def _learn_from_llm_chat(self, adjustments: dict, confidence: float,
-                              feedback: dict):
+    def _learn_from_llm_chat(
+        self, adjustments: dict, confidence: float, feedback: dict
+    ):
         """
         Aprende com ajustes sugeridos pelo LLM no chat conversacional.
 
@@ -2809,29 +3089,33 @@ class VirtualEngineer:
                 self._car_name, self._car_class or "hypercar"
             )
             track_id = self.db.get_or_create_track(self._track_name)
-            session_id = getattr(self, '_current_session_id', None)
+            session_id = getattr(self, "_current_session_id", None)
 
             if not session_id:
                 logger.debug("LLM chat learn: sem sessão ativa — ignorando.")
                 return
 
             from core.brain import LEVEL_OUTPUTS
+
             output_names = LEVEL_OUTPUTS.get(
                 self._current_level, LEVEL_OUTPUTS["basic"]
             )
 
             # Construir input a partir do feedback do usuário
             # (usa último estado normalizado se disponível)
-            if hasattr(self.normalizer, 'last_normalized') and self.normalizer.last_normalized is not None:
+            if (
+                hasattr(self.normalizer, "last_normalized")
+                and self.normalizer.last_normalized is not None
+            ):
                 input_vec = self.normalizer.last_normalized
             else:
                 # Sem telemetria — criar vetor "neutro" com feedback embutido
                 input_vec = np.zeros(49, dtype=np.float32)
                 # Injetar feedback do chat nas posições corretas
-                input_vec[33] = feedback.get("bias", 0)    # user_feedback_bias
-                input_vec[34] = feedback.get("entry", 0)    # user_feedback_entry
-                input_vec[35] = feedback.get("mid", 0)      # user_feedback_mid
-                input_vec[36] = feedback.get("exit", 0)     # user_feedback_exit
+                input_vec[33] = feedback.get("bias", 0)  # user_feedback_bias
+                input_vec[34] = feedback.get("entry", 0)  # user_feedback_entry
+                input_vec[35] = feedback.get("mid", 0)  # user_feedback_mid
+                input_vec[36] = feedback.get("exit", 0)  # user_feedback_exit
                 input_vec[37] = feedback.get("confidence", 0.7)  # user_confidence
 
             # Montar vetor de output
@@ -2860,7 +3144,9 @@ class VirtualEngineer:
             logger.info(
                 "LLM Chat→Rede Neural: %d ajustes aprendidos "
                 "(confiança=%.0f%%, nível=%s)",
-                matched, confidence * 100, self._current_level,
+                matched,
+                confidence * 100,
+                self._current_level,
             )
         except Exception as e:
             logger.debug("Erro learn_from_llm_chat: %s", e)
@@ -2887,7 +3173,7 @@ class VirtualEngineer:
         if not self.llm_advisor.enabled:
             return
 
-        if not getattr(self, '_llm_auto_enabled', False):
+        if not getattr(self, "_llm_auto_enabled", False):
             return
 
         # Auto-graduação: se IA já é autônoma, reduzir chamadas ao LLM
@@ -2909,12 +3195,10 @@ class VirtualEngineer:
         car_class = self._car_class or "hypercar"
 
         # Capturar IDs atuais para uso no callback (thread-safe)
-        car_id = self.db.get_or_create_car(
-            summary.vehicle_name, summary.vehicle_class
-        )
+        car_id = self.db.get_or_create_car(summary.vehicle_name, summary.vehicle_class)
         track_id = self.db.get_or_create_track(summary.track_name)
-        session_id = getattr(self, '_current_session_id', None)
-        features_raw = summary.features if hasattr(summary, 'features') else None
+        session_id = getattr(self, "_current_session_id", None)
+        features_raw = summary.features if hasattr(summary, "features") else None
 
         def _on_insight(insight):
             if not insight or not insight.adjustments:
@@ -2930,11 +3214,14 @@ class VirtualEngineer:
             # ═══════════════════════════════════════════
             # Converter ajustes do LLM em dados de treinamento
             # para que a rede neural APRENDA com o LLM
-            if (insight.confidence >= 0.4
-                    and session_id is not None
-                    and features_raw is not None):
+            if (
+                insight.confidence >= 0.4
+                and session_id is not None
+                and features_raw is not None
+            ):
                 try:
                     from core.brain import LEVEL_OUTPUTS
+
                     output_names = LEVEL_OUTPUTS.get(
                         self._current_level,
                         LEVEL_OUTPUTS["basic"],
@@ -2972,7 +3259,10 @@ class VirtualEngineer:
                         logger.info(
                             "LLM→Rede Neural: %d ajustes salvos como treino "
                             "(reward=%.2f, weight=%.1f, nível=%s)",
-                            matched, reward, weight, self._current_level,
+                            matched,
+                            reward,
+                            weight,
+                            self._current_level,
                         )
 
                         # ── Tracking de Autonomia ──
@@ -2989,12 +3279,11 @@ class VirtualEngineer:
                                 )
                             nn_deltas = None
                             if self.ia_enabled and model is not None:
-                                input_t = torch.FloatTensor(
-                                    input_vec
-                                ).unsqueeze(0)
+                                input_t = torch.FloatTensor(input_vec).unsqueeze(0)
                                 nn_deltas = model.predict(input_t)
                             self.distiller.track_live_comparison(
-                                nn_deltas, insight.adjustments,
+                                nn_deltas,
+                                insight.adjustments,
                             )
                         except Exception:
                             pass
@@ -3007,18 +3296,20 @@ class VirtualEngineer:
             if insight.confidence >= 0.5 and self._on_auto_suggestion_callback:
                 display = {k: v for k, v in insight.adjustments.items() if v != 0}
                 if display:
-                    self._on_auto_suggestion_callback({
-                        "deltas": insight.adjustments,
-                        "display_deltas": display,
-                        "explanation": (
-                            f"🤖 **Análise LLM** (confiança {insight.confidence*100:.0f}%):\n\n"
-                            f"{insight.explanation}\n\n"
-                            f"_📚 {matched if 'matched' in dir() else '?'} ajustes "
-                            f"incorporados ao treinamento da rede neural._"
-                        ),
-                        "warnings": insight.warnings,
-                        "source": "llm",
-                    })
+                    self._on_auto_suggestion_callback(
+                        {
+                            "deltas": insight.adjustments,
+                            "display_deltas": display,
+                            "explanation": (
+                                f"🤖 **Análise LLM** (confiança {insight.confidence*100:.0f}%):\n\n"
+                                f"{insight.explanation}\n\n"
+                                f"_📚 {matched if 'matched' in dir() else '?'} ajustes "
+                                f"incorporados ao treinamento da rede neural._"
+                            ),
+                            "warnings": insight.warnings,
+                            "source": "llm",
+                        }
+                    )
 
         try:
             self.llm_advisor.analyze_telemetry(
@@ -3076,23 +3367,30 @@ class VirtualEngineer:
 
             logger.info(
                 "Auto-sugestão gerada (volta %d, fonte=%s, %d ajustes)",
-                summary.lap_number, source, len(deltas),
+                summary.lap_number,
+                source,
+                len(deltas),
             )
 
         except Exception as e:
             logger.debug("Erro na auto-sugestão: %s", e)
 
-    def _build_auto_explanation(self, tele: dict, deltas: dict,
-                                source: str) -> str:
+    def _build_auto_explanation(self, tele: dict, deltas: dict, source: str) -> str:
         """Constrói explicação em linguagem natural para a auto-sugestão."""
-        parts = [f"📊 Análise automática após {len(self._lap_history)} voltas (via {source}):"]
+        parts = [
+            f"📊 Análise automática após {len(self._lap_history)} voltas (via {source}):"
+        ]
 
         problems = self._detect_all_problems(tele)
 
         if "understeer" in problems:
-            parts.append("🔄 Detectei understeer — ajustando balanço para mais rotação.")
+            parts.append(
+                "🔄 Detectei understeer — ajustando balanço para mais rotação."
+            )
         if "oversteer" in problems:
-            parts.append("🔄 Detectei oversteer — ajustando para mais estabilidade traseira.")
+            parts.append(
+                "🔄 Detectei oversteer — ajustando para mais estabilidade traseira."
+            )
         if "low_grip" in problems:
             parts.append("🏎️ Grip abaixo do ideal — otimizando pressões e aero.")
         if "rain" in problems:
@@ -3100,7 +3398,9 @@ class VirtualEngineer:
         if any("bottoming" in p for p in problems):
             parts.append("⚠️ Risco de bottoming — ajustando ride height e molas.")
         if any("temp_spread" in p for p in problems):
-            parts.append("🔥 Temperatura desbalanceada nos pneus — ajustando camber/pressão.")
+            parts.append(
+                "🔥 Temperatura desbalanceada nos pneus — ajustando camber/pressão."
+            )
         if any("pressure_high" in p for p in problems):
             parts.append("💨 Pressão dos pneus alta — reduzindo para melhor contato.")
         if any("pressure_low" in p for p in problems):
@@ -3110,7 +3410,9 @@ class VirtualEngineer:
             parts.append("🔧 Otimização geral baseada na telemetria coletada.")
 
         n_changes = sum(1 for v in deltas.values() if v != 0)
-        parts.append(f"\n💡 {n_changes} ajuste(s) sugerido(s). Veja o painel à direita.")
+        parts.append(
+            f"\n💡 {n_changes} ajuste(s) sugerido(s). Veja o painel à direita."
+        )
 
         return "\n".join(parts)
 
@@ -3150,122 +3452,385 @@ class VirtualEngineer:
         # ── Regras universais (todas as classes) ──
         UNIVERSAL_RULES = [
             # Temperatura / Pressão de pneus
-            ("temp_spread_fl", "Camber alto demais - desbalanceio térmico",
-             "delta_camber_f", -1, 0.7, "dry"),
-            ("temp_spread_fr", "Camber alto demais - desbalanceio térmico",
-             "delta_camber_f", -1, 0.7, "dry"),
-            ("temp_spread_rl", "Camber traseiro alto - desbalanceio térmico",
-             "delta_camber_r", -1, 0.7, "dry"),
-            ("temp_spread_rr", "Camber traseiro alto - desbalanceio térmico",
-             "delta_camber_r", -1, 0.7, "dry"),
-            ("pressure_high_fl", "Pressão alta - centro quente",
-             "delta_pressure_f", -1, 0.75, "dry"),
-            ("pressure_high_fr", "Pressão alta - centro quente",
-             "delta_pressure_f", -1, 0.75, "dry"),
-            ("pressure_high_rl", "Pressão alta traseira",
-             "delta_pressure_r", -1, 0.75, "dry"),
-            ("pressure_high_rr", "Pressão alta traseira",
-             "delta_pressure_r", -1, 0.75, "dry"),
-            ("pressure_low_fl", "Pressão baixa - bordas quentes",
-             "delta_pressure_f", 1, 0.75, "dry"),
-            ("pressure_low_fr", "Pressão baixa - bordas quentes",
-             "delta_pressure_f", 1, 0.75, "dry"),
-            ("pressure_low_rl", "Pressão baixa traseira",
-             "delta_pressure_r", 1, 0.75, "dry"),
-            ("pressure_low_rr", "Pressão baixa traseira",
-             "delta_pressure_r", 1, 0.75, "dry"),
-
+            (
+                "temp_spread_fl",
+                "Camber alto demais - desbalanceio térmico",
+                "delta_camber_f",
+                -1,
+                0.7,
+                "dry",
+            ),
+            (
+                "temp_spread_fr",
+                "Camber alto demais - desbalanceio térmico",
+                "delta_camber_f",
+                -1,
+                0.7,
+                "dry",
+            ),
+            (
+                "temp_spread_rl",
+                "Camber traseiro alto - desbalanceio térmico",
+                "delta_camber_r",
+                -1,
+                0.7,
+                "dry",
+            ),
+            (
+                "temp_spread_rr",
+                "Camber traseiro alto - desbalanceio térmico",
+                "delta_camber_r",
+                -1,
+                0.7,
+                "dry",
+            ),
+            (
+                "pressure_high_fl",
+                "Pressão alta - centro quente",
+                "delta_pressure_f",
+                -1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_high_fr",
+                "Pressão alta - centro quente",
+                "delta_pressure_f",
+                -1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_high_rl",
+                "Pressão alta traseira",
+                "delta_pressure_r",
+                -1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_high_rr",
+                "Pressão alta traseira",
+                "delta_pressure_r",
+                -1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_low_fl",
+                "Pressão baixa - bordas quentes",
+                "delta_pressure_f",
+                1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_low_fr",
+                "Pressão baixa - bordas quentes",
+                "delta_pressure_f",
+                1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_low_rl",
+                "Pressão baixa traseira",
+                "delta_pressure_r",
+                1,
+                0.75,
+                "dry",
+            ),
+            (
+                "pressure_low_rr",
+                "Pressão baixa traseira",
+                "delta_pressure_r",
+                1,
+                0.75,
+                "dry",
+            ),
             # Understeer / Oversteer
-            ("understeer", "Amaciar barra dianteira para rotação",
-             "delta_arb_f", -1, 0.65, "dry"),
-            ("understeer", "Aumentar asa traseira para mais downforce",
-             "delta_rw", 1, 0.6, "dry"),
-            ("understeer", "Endurecer barra traseira para rotação",
-             "delta_arb_r", 1, 0.55, "dry"),
-            ("oversteer", "Endurecer barra dianteira para estabilidade",
-             "delta_arb_f", 1, 0.65, "dry"),
-            ("oversteer", "Amaciar barra traseira para tração",
-             "delta_arb_r", -1, 0.6, "dry"),
-            ("oversteer", "Amaciar mola traseira para mais grip",
-             "delta_spring_r", -1, 0.55, "dry"),
-
+            (
+                "understeer",
+                "Amaciar barra dianteira para rotação",
+                "delta_arb_f",
+                -1,
+                0.65,
+                "dry",
+            ),
+            (
+                "understeer",
+                "Aumentar asa traseira para mais downforce",
+                "delta_rw",
+                1,
+                0.6,
+                "dry",
+            ),
+            (
+                "understeer",
+                "Endurecer barra traseira para rotação",
+                "delta_arb_r",
+                1,
+                0.55,
+                "dry",
+            ),
+            (
+                "oversteer",
+                "Endurecer barra dianteira para estabilidade",
+                "delta_arb_f",
+                1,
+                0.65,
+                "dry",
+            ),
+            (
+                "oversteer",
+                "Amaciar barra traseira para tração",
+                "delta_arb_r",
+                -1,
+                0.6,
+                "dry",
+            ),
+            (
+                "oversteer",
+                "Amaciar mola traseira para mais grip",
+                "delta_spring_r",
+                -1,
+                0.55,
+                "dry",
+            ),
             # Bottoming
-            ("bottoming_front", "Subir ride height dianteiro",
-             "delta_ride_height_f", 1, 0.8, "dry"),
-            ("bottoming_front", "Endurecer mola dianteira",
-             "delta_spring_f", 1, 0.7, "dry"),
-            ("bottoming_rear", "Subir ride height traseiro",
-             "delta_ride_height_r", 1, 0.8, "dry"),
-            ("bottoming_rear", "Endurecer mola traseira",
-             "delta_spring_r", 1, 0.7, "dry"),
-
+            (
+                "bottoming_front",
+                "Subir ride height dianteiro",
+                "delta_ride_height_f",
+                1,
+                0.8,
+                "dry",
+            ),
+            (
+                "bottoming_front",
+                "Endurecer mola dianteira",
+                "delta_spring_f",
+                1,
+                0.7,
+                "dry",
+            ),
+            (
+                "bottoming_rear",
+                "Subir ride height traseiro",
+                "delta_ride_height_r",
+                1,
+                0.8,
+                "dry",
+            ),
+            (
+                "bottoming_rear",
+                "Endurecer mola traseira",
+                "delta_spring_r",
+                1,
+                0.7,
+                "dry",
+            ),
             # Low grip
-            ("low_grip", "Ajustar pressão para janela ideal",
-             "delta_pressure_f", -1, 0.5, "dry"),
-            ("low_grip", "Aumentar camber para grip lateral",
-             "delta_camber_f", 1, 0.5, "dry"),
-
+            (
+                "low_grip",
+                "Ajustar pressão para janela ideal",
+                "delta_pressure_f",
+                -1,
+                0.5,
+                "dry",
+            ),
+            (
+                "low_grip",
+                "Aumentar camber para grip lateral",
+                "delta_camber_f",
+                1,
+                0.5,
+                "dry",
+            ),
             # Chuva
-            ("rain", "Amaciar molas para chuva",
-             "delta_spring_f", -1, 0.7, "wet"),
-            ("rain", "Amaciar molas traseiras para chuva",
-             "delta_spring_r", -1, 0.7, "wet"),
-            ("rain", "Aumentar asa para mais downforce na chuva",
-             "delta_rw", 2, 0.75, "wet"),
-            ("rain", "Subir ride height para evitar aquaplanagem",
-             "delta_ride_height_f", 1, 0.65, "wet"),
-            ("rain", "Subir ride height traseiro para chuva",
-             "delta_ride_height_r", 1, 0.65, "wet"),
-
+            ("rain", "Amaciar molas para chuva", "delta_spring_f", -1, 0.7, "wet"),
+            (
+                "rain",
+                "Amaciar molas traseiras para chuva",
+                "delta_spring_r",
+                -1,
+                0.7,
+                "wet",
+            ),
+            (
+                "rain",
+                "Aumentar asa para mais downforce na chuva",
+                "delta_rw",
+                2,
+                0.75,
+                "wet",
+            ),
+            (
+                "rain",
+                "Subir ride height para evitar aquaplanagem",
+                "delta_ride_height_f",
+                1,
+                0.65,
+                "wet",
+            ),
+            (
+                "rain",
+                "Subir ride height traseiro para chuva",
+                "delta_ride_height_r",
+                1,
+                0.65,
+                "wet",
+            ),
             # Zebras / Saltos
-            ("curb_instability", "Reduzir fast bump para absorver zebras",
-             "delta_fast_bump_f", -1, 0.7, "dry"),
-            ("curb_instability", "Reduzir fast bump traseiro",
-             "delta_fast_bump_r", -1, 0.7, "dry"),
-
+            (
+                "curb_instability",
+                "Reduzir fast bump para absorver zebras",
+                "delta_fast_bump_f",
+                -1,
+                0.7,
+                "dry",
+            ),
+            (
+                "curb_instability",
+                "Reduzir fast bump traseiro",
+                "delta_fast_bump_r",
+                -1,
+                0.7,
+                "dry",
+            ),
             # Frenagem
-            ("brake_lock_front", "Mover bias para trás",
-             "delta_rear_brake_bias", 1, 0.7, "dry"),
-            ("brake_overheat", "Abrir dutos de freio",
-             "delta_brake_duct_f", 1, 0.65, "dry"),
+            (
+                "brake_lock_front",
+                "Mover bias para trás",
+                "delta_rear_brake_bias",
+                1,
+                0.7,
+                "dry",
+            ),
+            (
+                "brake_overheat",
+                "Abrir dutos de freio",
+                "delta_brake_duct_f",
+                1,
+                0.65,
+                "dry",
+            ),
         ]
 
         # ── Regras específicas por classe ──
         CLASS_RULES = {
             "lmgt3": [
                 # GT3: foco em mecânico + eletrônico
-                ("understeer", "Reduzir TC para mais potência na saída",
-                 "delta_tc_map", -1, 0.5, "dry"),
-                ("oversteer", "Aumentar TC para estabilidade na saída",
-                 "delta_tc_map", 1, 0.6, "dry"),
-                ("brake_lock_front", "Aumentar ABS para margem no freio",
-                 "delta_abs_map", 1, 0.6, "dry"),
-                ("low_grip", "Endurecer molas para pistas lisas",
-                 "delta_spring_f", 1, 0.45, "dry"),
-                ("low_grip", "Amaciar molas para pistas onduladas",
-                 "delta_spring_f", -1, 0.45, "dry"),
+                (
+                    "understeer",
+                    "Reduzir TC para mais potência na saída",
+                    "delta_tc_map",
+                    -1,
+                    0.5,
+                    "dry",
+                ),
+                (
+                    "oversteer",
+                    "Aumentar TC para estabilidade na saída",
+                    "delta_tc_map",
+                    1,
+                    0.6,
+                    "dry",
+                ),
+                (
+                    "brake_lock_front",
+                    "Aumentar ABS para margem no freio",
+                    "delta_abs_map",
+                    1,
+                    0.6,
+                    "dry",
+                ),
+                (
+                    "low_grip",
+                    "Endurecer molas para pistas lisas",
+                    "delta_spring_f",
+                    1,
+                    0.45,
+                    "dry",
+                ),
+                (
+                    "low_grip",
+                    "Amaciar molas para pistas onduladas",
+                    "delta_spring_f",
+                    -1,
+                    0.45,
+                    "dry",
+                ),
             ],
             "lmp2": [
                 # LMP2: sem ABS/TC, foco em aero pura
-                ("understeer", "Reduzir rake para equilíbrio aero",
-                 "delta_ride_height_r", -1, 0.55, "dry"),
-                ("oversteer", "Aumentar rake para estabilidade",
-                 "delta_ride_height_r", 1, 0.55, "dry"),
-                ("brake_lock_front", "Ajustar bias - sem ABS em LMP2",
-                 "delta_rear_brake_bias", 2, 0.7, "dry"),
-                ("understeer", "Aumentar asa traseira - LMP2 depende de aero",
-                 "delta_rw", 2, 0.65, "dry"),
+                (
+                    "understeer",
+                    "Reduzir rake para equilíbrio aero",
+                    "delta_ride_height_r",
+                    -1,
+                    0.55,
+                    "dry",
+                ),
+                (
+                    "oversteer",
+                    "Aumentar rake para estabilidade",
+                    "delta_ride_height_r",
+                    1,
+                    0.55,
+                    "dry",
+                ),
+                (
+                    "brake_lock_front",
+                    "Ajustar bias - sem ABS em LMP2",
+                    "delta_rear_brake_bias",
+                    2,
+                    0.7,
+                    "dry",
+                ),
+                (
+                    "understeer",
+                    "Aumentar asa traseira - LMP2 depende de aero",
+                    "delta_rw",
+                    2,
+                    0.65,
+                    "dry",
+                ),
             ],
             "hypercar": [
                 # Hypercar: híbrido + gestão de energia
-                ("understeer", "Ajustar mapa de regeneração para equilíbrio",
-                 "delta_rw", 1, 0.6, "dry"),
-                ("oversteer", "Reduzir entrega do motor elétrico",
-                 "delta_tc_map", 1, 0.55, "dry"),
-                ("low_grip", "Ajustar rake para mais downforce",
-                 "delta_ride_height_f", -1, 0.5, "dry"),
-                ("low_grip", "Aumentar rake traseiro para downforce",
-                 "delta_ride_height_r", 1, 0.5, "dry"),
+                (
+                    "understeer",
+                    "Ajustar mapa de regeneração para equilíbrio",
+                    "delta_rw",
+                    1,
+                    0.6,
+                    "dry",
+                ),
+                (
+                    "oversteer",
+                    "Reduzir entrega do motor elétrico",
+                    "delta_tc_map",
+                    1,
+                    0.55,
+                    "dry",
+                ),
+                (
+                    "low_grip",
+                    "Ajustar rake para mais downforce",
+                    "delta_ride_height_f",
+                    -1,
+                    0.5,
+                    "dry",
+                ),
+                (
+                    "low_grip",
+                    "Aumentar rake traseiro para downforce",
+                    "delta_ride_height_r",
+                    1,
+                    0.5,
+                    "dry",
+                ),
             ],
         }
 
@@ -3315,7 +3880,8 @@ class VirtualEngineer:
             self.db.conn.commit()
             logger.info(
                 "Seed de conhecimento: %d regras adicionadas, %d ignoradas",
-                rules_added, rules_skipped,
+                rules_added,
+                rules_skipped,
             )
         except Exception as e:
             logger.error("Erro no seed de conhecimento: %s", e)
@@ -3337,9 +3903,7 @@ class VirtualEngineer:
             )
             effective_rules = cursor.fetchone()[0]
 
-            cursor.execute(
-                "SELECT COUNT(DISTINCT car_class) FROM learning_rules"
-            )
+            cursor.execute("SELECT COUNT(DISTINCT car_class) FROM learning_rules")
             classes_covered = cursor.fetchone()[0]
 
             cursor.execute(
@@ -3357,9 +3921,12 @@ class VirtualEngineer:
             }
         except Exception:
             return {
-                "total_rules": 0, "total_samples": 0,
-                "effective_rules": 0, "classes_covered": 0,
-                "seed_rules": 0, "confidence": 0.0,
+                "total_rules": 0,
+                "total_samples": 0,
+                "effective_rules": 0,
+                "classes_covered": 0,
+                "seed_rules": 0,
+                "confidence": 0.0,
             }
 
     # ─────────────────────────────────────────────────────
@@ -3369,6 +3936,7 @@ class VirtualEngineer:
     def export_data(self) -> Path:
         """Exporta dados do banco em formato JSON."""
         import json
+
         export_path = USER_DATA_DIR / "export.json"
 
         cursor = self.db.conn.cursor()
@@ -3379,14 +3947,16 @@ class VirtualEngineer:
             columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
             data[table] = [
-                {col: (val if not isinstance(val, bytes) else "<blob>")
-                 for col, val in zip(columns, row)}
+                {
+                    col: (val if not isinstance(val, bytes) else "<blob>")
+                    for col, val in zip(columns, row)
+                }
                 for row in rows
             ]
 
         export_path.write_text(
             json.dumps(data, indent=2, default=str, ensure_ascii=False),
-            encoding="utf-8"
+            encoding="utf-8",
         )
         return export_path
 
@@ -3403,7 +3973,8 @@ class VirtualEngineer:
             return
         try:
             car_id = self.db.get_or_create_car(
-                self._car_name, self._car_class,
+                self._car_name,
+                self._car_class,
             )
             track_id = self.db.get_or_create_track(self._track_name)
             driver_id = self.db.get_or_create_driver(
@@ -3416,7 +3987,11 @@ class VirtualEngineer:
                 "total_laps_driven": len(self._lap_history),
                 "last_deltas": self._last_display_deltas or {},
                 "last_display_deltas": self._last_display_deltas or {},
-                "fuel_context": self._lap_history[-1].get("fuel_context", "normal") if self._lap_history else "normal",
+                "fuel_context": (
+                    self._lap_history[-1].get("fuel_context", "normal")
+                    if self._lap_history
+                    else "normal"
+                ),
             }
 
             # Setup base
@@ -3424,18 +3999,14 @@ class VirtualEngineer:
                 state["base_svm_path"] = str(self._base_svm.filepath)
                 state["base_svm_name"] = self._base_svm.filepath.name
                 try:
-                    state["base_svm_content"] = (
-                        self._base_svm.filepath.read_text(
-                            encoding="iso-8859-1",
-                        )
+                    state["base_svm_content"] = self._base_svm.filepath.read_text(
+                        encoding="iso-8859-1",
                     )
                 except Exception:
                     pass
 
             # Melhor volta
-            valid_times = [
-                h["time"] for h in self._lap_history if h.get("valid")
-            ]
+            valid_times = [h["time"] for h in self._lap_history if h.get("valid")]
             if valid_times:
                 state["best_lap_time"] = min(valid_times)
 
@@ -3443,16 +4014,14 @@ class VirtualEngineer:
             if self._lap_history:
                 last = self._lap_history[-1]
                 features = last.get("features", {})
-                state["weather"] = (
-                    "wet" if features.get("raining", 0) > 0.3
-                    else "dry"
-                )
+                state["weather"] = "wet" if features.get("raining", 0) > 0.3 else "dry"
                 state["air_temp_c"] = features.get("ambient_temp")
                 state["track_temp_c"] = features.get("track_temp")
 
             self.db.save_session_state(car_id, track_id, state)
-            logger.debug("Estado da sessão salvo para %s @ %s",
-                         self._car_name, self._track_name)
+            logger.debug(
+                "Estado da sessão salvo para %s @ %s", self._car_name, self._track_name
+            )
         except Exception as e:
             logger.debug("Erro ao salvar estado da sessão: %s", e)
 
@@ -3476,10 +4045,9 @@ class VirtualEngineer:
             if base_path and Path(base_path).exists() and not self._base_svm:
                 try:
                     from data.svm_parser import parse_svm
+
                     self._base_svm = parse_svm(base_path)
-                    restored_items.append(
-                        f"📄 Setup base: {Path(base_path).name}"
-                    )
+                    restored_items.append(f"📄 Setup base: {Path(base_path).name}")
                 except Exception:
                     pass
 
@@ -3487,17 +4055,13 @@ class VirtualEngineer:
             last_deltas = state.get("last_display_deltas")
             if last_deltas and isinstance(last_deltas, dict):
                 self._last_display_deltas = last_deltas
-                restored_items.append(
-                    f"🔧 Últimos ajustes ({len(last_deltas)} params)"
-                )
+                restored_items.append(f"🔧 Últimos ajustes ({len(last_deltas)} params)")
 
             # Restaurar nível
             saved_level = state.get("ai_level")
             if saved_level in ("basic", "intermediate", "advanced"):
                 self._current_level = saved_level
-                restored_items.append(
-                    f"🎓 Nível: {saved_level.upper()}"
-                )
+                restored_items.append(f"🎓 Nível: {saved_level.upper()}")
 
             # Notificar GUI
             if restored_items and self._on_trend_alert_callback:
@@ -3547,6 +4111,7 @@ class VirtualEngineer:
 
             # Extrair parâmetros-chave do SVM
             from core.brain import DELTA_TO_SVM
+
             for delta_name, svm_keys in DELTA_TO_SVM.items():
                 for svm_key in svm_keys:
                     param = svm.get_param(svm_key)
@@ -3570,7 +4135,8 @@ class VirtualEngineer:
                 pass
 
             self.db.save_setup_snapshot(
-                self._current_session_id, setup_data,
+                self._current_session_id,
+                setup_data,
             )
             logger.debug("Snapshot do setup salvo.")
         except Exception as e:
@@ -3580,8 +4146,7 @@ class VirtualEngineer:
     # Autonomia — AI self-learning knowledge
     # ─────────────────────────────────────────────────────
 
-    def _ai_self_learn_knowledge(self, topic: str,
-                                 category: str = "parameter"):
+    def _ai_self_learn_knowledge(self, topic: str, category: str = "parameter"):
         """
         A IA aprende sozinha sobre um tópico consultando o LLM
         e salvando o resultado no banco de conhecimento.
@@ -3612,20 +4177,16 @@ class VirtualEngineer:
                 # Inferir parâmetros relacionados
                 related = []
                 param_keywords = {
-                    "tc": ["delta_tc_onboard", "delta_tc_map",
-                           "delta_tc_power_cut"],
+                    "tc": ["delta_tc_onboard", "delta_tc_map", "delta_tc_power_cut"],
                     "abs": ["delta_abs_map"],
                     "traction": ["delta_tc_map", "delta_tc_onboard"],
-                    "brake": ["delta_brake_press",
-                              "delta_rear_brake_bias"],
+                    "brake": ["delta_brake_press", "delta_rear_brake_bias"],
                     "spring": ["delta_spring_f", "delta_spring_r"],
                     "camber": ["delta_camber_f", "delta_camber_r"],
-                    "pressure": ["delta_pressure_f",
-                                 "delta_pressure_r"],
+                    "pressure": ["delta_pressure_f", "delta_pressure_r"],
                     "wing": ["delta_rw"],
                     "differential": ["delta_diff_preload"],
-                    "ride height": ["delta_ride_height_f",
-                                    "delta_ride_height_r"],
+                    "ride height": ["delta_ride_height_f", "delta_ride_height_r"],
                 }
                 topic_lower = topic.lower()
                 for kw, params in param_keywords.items():
@@ -3642,16 +4203,19 @@ class VirtualEngineer:
                     related_params=related if related else None,
                 )
                 logger.info(
-                    "IA aprendeu sobre '%s' (knowledge base)", topic,
+                    "IA aprendeu sobre '%s' (knowledge base)",
+                    topic,
                 )
             except Exception as e:
                 logger.debug(
                     "Erro ao salvar conhecimento '%s': %s",
-                    topic, e,
+                    topic,
+                    e,
                 )
 
         self.llm_advisor.chat(
-            question, callback=_on_response,
+            question,
+            callback=_on_response,
         )
 
     def _seed_initial_knowledge(self):
@@ -3666,42 +4230,39 @@ class VirtualEngineer:
             return
 
         topics = [
-            ("tc_onboard", "parameter",
-             "Controle de Tração (TC Onboard) — liga/desliga"),
-            ("tc_map", "parameter",
-             "Mapa de Controle de Tração (TC Map)"),
-            ("tc_power_cut", "parameter",
-             "Corte de Potência do TC (TC Power Cut)"),
-            ("tc_slip_angle", "parameter",
-             "Ângulo de Escorregamento do TC (TC Slip Angle)"),
-            ("abs_map", "parameter",
-             "Mapa do ABS (Anti-lock Braking System)"),
-            ("understeer", "concept",
-             "Subesterço (Understeer) em corrida"),
-            ("oversteer", "concept",
-             "Sobreesterço (Oversteer) em corrida"),
-            ("tire_temperature", "concept",
-             "Temperatura dos pneus em corrida"),
-            ("brake_bias", "parameter",
-             "Balanço de frenagem (Brake Bias)"),
-            ("differential_preload", "parameter",
-             "Pré-carga do Diferencial"),
-            ("ride_height", "parameter",
-             "Altura ao solo (Ride Height)"),
-            ("rear_wing", "parameter",
-             "Asa traseira (Rear Wing / Downforce)"),
+            (
+                "tc_onboard",
+                "parameter",
+                "Controle de Tração (TC Onboard) — liga/desliga",
+            ),
+            ("tc_map", "parameter", "Mapa de Controle de Tração (TC Map)"),
+            ("tc_power_cut", "parameter", "Corte de Potência do TC (TC Power Cut)"),
+            (
+                "tc_slip_angle",
+                "parameter",
+                "Ângulo de Escorregamento do TC (TC Slip Angle)",
+            ),
+            ("abs_map", "parameter", "Mapa do ABS (Anti-lock Braking System)"),
+            ("understeer", "concept", "Subesterço (Understeer) em corrida"),
+            ("oversteer", "concept", "Sobreesterço (Oversteer) em corrida"),
+            ("tire_temperature", "concept", "Temperatura dos pneus em corrida"),
+            ("brake_bias", "parameter", "Balanço de frenagem (Brake Bias)"),
+            ("differential_preload", "parameter", "Pré-carga do Diferencial"),
+            ("ride_height", "parameter", "Altura ao solo (Ride Height)"),
+            ("rear_wing", "parameter", "Asa traseira (Rear Wing / Downforce)"),
         ]
 
         import threading
 
         def _learn_batch():
             import time
+
             for topic, cat, desc in topics:
                 self._ai_self_learn_knowledge(topic, cat)
                 time.sleep(2)  # Não sobrecarregar a API
             logger.info(
-                "Base de conhecimento inicial populada "
-                "(%d tópicos)", len(topics),
+                "Base de conhecimento inicial populada " "(%d tópicos)",
+                len(topics),
             )
 
         t = threading.Thread(target=_learn_batch, daemon=True)
@@ -3741,11 +4302,16 @@ class VirtualEngineer:
                     self.db.end_session(
                         self._current_session_id,
                         total_laps=len(self._lap_history),
-                        best_lap=min((h["time"] for h in self._lap_history
-                                      if h.get("valid")), default=None),
+                        best_lap=min(
+                            (h["time"] for h in self._lap_history if h.get("valid")),
+                            default=None,
+                        ),
                     )
-                logger.info("Memória da sessão salva para %s @ %s",
-                            self._car_name, self._track_name)
+                logger.info(
+                    "Memória da sessão salva para %s @ %s",
+                    self._car_name,
+                    self._track_name,
+                )
             except Exception as e:
                 logger.debug("Erro ao salvar memória da sessão: %s", e)
 
@@ -3788,6 +4354,7 @@ class VirtualEngineer:
 # PONTO DE ENTRADA
 # ================================================================
 
+
 def check_single_instance():
     """
     Verifica se já existe uma instância do app rodando.
@@ -3796,23 +4363,23 @@ def check_single_instance():
     """
     import ctypes
     from ctypes import wintypes
-    
+
     # Nome único do mutex
     mutex_name = "SectorFlowSetups_SingleInstance_Mutex"
-    
+
     # Constantes do Windows
     ERROR_ALREADY_EXISTS = 183
-    
+
     # Criar mutex
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.CreateMutexW(None, True, mutex_name)
     last_error = kernel32.GetLastError()
-    
+
     if last_error == ERROR_ALREADY_EXISTS:
         # Já existe outra instância
         kernel32.CloseHandle(handle)
         return False
-    
+
     # Primeira instância - manter mutex aberto
     # (será liberado automaticamente quando o processo terminar)
     return True
@@ -3821,12 +4388,13 @@ def check_single_instance():
 def show_already_running_message():
     """Mostra mensagem informando que o app já está rodando."""
     import ctypes
+
     ctypes.windll.user32.MessageBoxW(
         0,
         "O Sector Flow Setups já está em execução!\n\n"
         "Verifique a barra de tarefas ou a bandeja do sistema.",
         "Sector Flow Setups - Já em Execução",
-        0x40  # MB_ICONINFORMATION
+        0x40,  # MB_ICONINFORMATION
     )
 
 
@@ -3836,7 +4404,7 @@ def main():
     if not check_single_instance():
         show_already_running_message()
         sys.exit(0)
-    
+
     setup_logging()
 
     logger.info("=" * 60)
@@ -3848,13 +4416,15 @@ def main():
 
     # Escanear setups disponíveis em background (não bloqueia a GUI)
     import threading
+
     def _startup_scan():
         try:
             result = engine.learn_from_all_setups()
             if result["scanned"] > 0:
                 logger.info(
                     "Startup: %d setups escaneados de %d pistas",
-                    result["scanned"], result["tracks"],
+                    result["scanned"],
+                    result["tracks"],
                 )
         except Exception as e:
             logger.debug("Startup scan de setups falhou: %s", e)
@@ -3863,6 +4433,7 @@ def main():
 
     # Iniciar GUI
     from gui.app import MainApp
+
     app = MainApp(engine=engine)
 
     logger.info("GUI iniciada. Aguardando interação do usuário.")
