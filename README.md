@@ -5,8 +5,8 @@
 ### 🏁 Exclusively for Le Mans Ultimate — Le Mans Ultimate exclusivo
 
 [![Download .EXE](https://img.shields.io/badge/⬇️%20Download%20.EXE-v1.0--beta-brightgreen?style=for-the-badge)](https://github.com/RomarioSantos-Oficial/SectorFlow-Setups/releases/tag/v1.0-beta)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord)](https://discord.gg/jJSVvKbFxs)
-[![Status](https://img.shields.io/badge/Status-Beta-orange?style=for-the-badge)]()
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord)](https://discord.gg/6sqNmZkJKR)
+![Status](https://img.shields.io/badge/Status-Beta-orange?style=for-the-badge)
 
 > **EN** — AI-powered setup assistant that reads live telemetry and suggests car configurations for **Le Mans Ultimate** only.  
 > **PT** — Assistente de setup com IA que lê telemetria ao vivo e sugere configurações de carro exclusivamente para o **Le Mans Ultimate**.
@@ -201,7 +201,7 @@ This is **normal and expected**. At the beginning, the system relies more on heu
 
 Join our community for support, questions, and updates:
 
-**[👉 https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+**[👉 [(https://discord.gg/jJSVvKbFxs)](https://discord.gg/6sqNmZkJKR)**
 
 ---
 
@@ -303,7 +303,7 @@ Este projeto está em **beta**. Funcionalidades podem mudar, bugs podem existir,
 
 Join our Discord for support, questions, and news:
 
-**[https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+**[DISCORD](https://discord.gg/6sqNmZkJKR)**
 
 ## Project Status
 
@@ -515,7 +515,7 @@ Ferramenta para Le Mans Ultimate focada em leitura de telemetria, sugestoes de s
 
 Entre no nosso Discord para suporte, duvidas e novidades:
 
-**[https://discord.gg/jJSVvKbFxs](https://discord.gg/jJSVvKbFxs)**
+**[[DISCORD](https://discord.gg/jJSVvKbFxs)**
 
 ## Estado do Projeto
 
